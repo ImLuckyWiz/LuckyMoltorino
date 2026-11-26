@@ -30,6 +30,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <mutex>
 #include <optional>
@@ -375,6 +376,10 @@ public:
     bool isChannelPointsFetchInFlight() const;
     bool shouldShowChannelPoints() const;
     void setChannelPointBalance(qint64 balance);
+    QString availableBonusClaimId() const;
+    bool hasAvailableBonusClaim() const;
+    bool isBonusClaimInFlight() const;
+    void claimAvailableBonusPoints(bool automatic = false);
     void handleChatWarningPubSub(const QJsonObject &payload);
     void handleChatWarningNotice();
     void refreshChatWarningIfStale(bool force = false,
@@ -791,6 +796,9 @@ private:
     QDateTime lastChannelPointsRefreshAt_;
     QDateTime lastChannelPointsUpdateAt_;
     QString lastChannelPointsError_;
+    QString availableBonusClaimId_;
+    bool bonusClaimInFlight_ = false;
+    std::deque<QString> recentClaimedBonusIds_;
     bool disconnected_{};
     std::atomic<std::uint64_t> expectedReconnectGeneration_{};
     std::atomic<std::uint64_t> expectedReconnectToken_{};

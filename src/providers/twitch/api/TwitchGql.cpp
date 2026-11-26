@@ -5781,6 +5781,18 @@ void TwitchGql::getChannelPoints(const QString &channelLogin,
                                  std::function<void(qint64)> successCallback,
                                  std::function<void(const QString &)> failureCallback)
 {
+    TwitchGql::getChannelPointsContext(
+        channelLogin, oauthToken,
+        [successCallback = std::move(successCallback)](
+            GqlChannelPointsContext ctx) { successCallback(ctx.balance); },
+        std::move(failureCallback));
+}
+
+void TwitchGql::getChannelPointsContext(
+    const QString &channelLogin, const QString &oauthToken,
+    std::function<void(GqlChannelPointsContext)> successCallback,
+    std::function<void(const QString &)> failureCallback)
+{
     QJsonObject variables;
     variables.insert("channelLogin", channelLogin);
 
@@ -5790,14 +5802,42 @@ void TwitchGql::getChannelPoints(const QString &channelLogin,
                 self {
                     communityPoints {
                         balance
+                        availableClaim {
+                            id
+                        }
                     }
                 }
             }
         }
     )";
 
+    auto parseContext = [](const rapidjson::Value &cp,
+                           GqlChannelPointsContext &out) -> bool {
+        if (!cp.IsObject())
+        {
+            return false;
+        }
+        qint64 points = 0;
+        if (!readInteger(cp, "balance", points))
+        {
+            return false;
+        }
+        out.balance = points;
+        if (cp.HasMember("availableClaim") && cp["availableClaim"].IsObject())
+        {
+            const auto &claim = cp["availableClaim"];
+            QString claimId;
+            if (rj::getSafe(claim, "id", claimId))
+            {
+                out.availableClaimId = claimId.trimmed();
+            }
+        }
+        return true;
+    };
+
     makeTvInlineGqlRequest(channelPointsQuery, variables, oauthToken)
-        .onSuccess([successCallback, failureCallback](const NetworkResult &result) {
+        .onSuccess([successCallback, failureCallback,
+                    parseContext](const NetworkResult &result) {
             auto doc = result.parseRapidJson();
             if (doc.HasParseError())
             {
@@ -5806,62 +5846,62 @@ void TwitchGql::getChannelPoints(const QString &channelLogin,
             }
 
             const rapidjson::Value *dataVal = nullptr;
-            if (doc.IsArray() && doc.Size() > 0 && doc[0].IsObject() && doc[0].HasMember("data") && doc[0]["data"].IsObject())
+            if (doc.IsArray() && doc.Size() > 0 && doc[0].IsObject() &&
+                doc[0].HasMember("data") && doc[0]["data"].IsObject())
+            {
                 dataVal = &doc[0]["data"];
-            else if (doc.IsObject() && doc.HasMember("data") && doc["data"].IsObject())
+            }
+            else if (doc.IsObject() && doc.HasMember("data") &&
+                     doc["data"].IsObject())
+            {
                 dataVal = &doc["data"];
+            }
 
-            if (dataVal && dataVal->HasMember("community") && (*dataVal)["community"].IsObject())
+            GqlChannelPointsContext ctx;
+            if (dataVal && dataVal->HasMember("community") &&
+                (*dataVal)["community"].IsObject())
             {
                 const auto &community = (*dataVal)["community"];
-                if (community.HasMember("channel") && community["channel"].IsObject())
+                if (community.HasMember("channel") &&
+                    community["channel"].IsObject())
                 {
                     const auto &channel = community["channel"];
-                    if (channel.HasMember("self") && channel["self"].IsObject())
+                    if (channel.HasMember("self") &&
+                        channel["self"].IsObject())
                     {
                         const auto &self = channel["self"];
-                        if (self.HasMember("communityPoints") && self["communityPoints"].IsObject())
+                        if (self.HasMember("communityPoints") &&
+                            parseContext(self["communityPoints"], ctx))
                         {
-                            const auto &cp = self["communityPoints"];
-                            qint64 points = 0;
-                            if (readInteger(cp, "balance", points))
-                            {
-                                successCallback(points);
-                                return;
-                            }
+                            successCallback(std::move(ctx));
+                            return;
                         }
                     }
                 }
             }
-            if (dataVal && dataVal->HasMember("currentUser") && (*dataVal)["currentUser"].IsObject())
+            if (dataVal && dataVal->HasMember("currentUser") &&
+                (*dataVal)["currentUser"].IsObject())
             {
                 const auto &currentUser = (*dataVal)["currentUser"];
-                if (currentUser.HasMember("communityPoints") && currentUser["communityPoints"].IsObject())
+                if (currentUser.HasMember("communityPoints") &&
+                    parseContext(currentUser["communityPoints"], ctx))
                 {
-                    const auto &cp = currentUser["communityPoints"];
-                    qint64 points = 0;
-                    if (readInteger(cp, "balance", points))
-                    {
-                        successCallback(points);
-                        return;
-                    }
+                    successCallback(std::move(ctx));
+                    return;
                 }
             }
-            if (dataVal && dataVal->HasMember("channel") && (*dataVal)["channel"].IsObject())
+            if (dataVal && dataVal->HasMember("channel") &&
+                (*dataVal)["channel"].IsObject())
             {
                 const auto &channel = (*dataVal)["channel"];
                 if (channel.HasMember("self") && channel["self"].IsObject())
                 {
                     const auto &self = channel["self"];
-                    if (self.HasMember("communityPoints") && self["communityPoints"].IsObject())
+                    if (self.HasMember("communityPoints") &&
+                        parseContext(self["communityPoints"], ctx))
                     {
-                        const auto &cp = self["communityPoints"];
-                        qint64 points = 0;
-                        if (readInteger(cp, "balance", points))
-                        {
-                            successCallback(points);
-                            return;
-                        }
+                        successCallback(std::move(ctx));
+                        return;
                     }
                 }
             }
@@ -8824,6 +8864,496 @@ query ModeratedChannels {
                 error += " | " + body.left(200);
             }
             requestPersistedFallback(std::move(error));
+        })
+        .execute();
+}
+
+namespace {
+
+GqlDropCampaign parseDropCampaignObject(const QJsonObject &obj,
+                                        const QSet<QString> &claimedBenefitIds)
+{
+    GqlDropCampaign campaign;
+    campaign.id = obj.value("id").toString();
+    campaign.name = obj.value("name").toString();
+    campaign.ownerName = obj.value("owner").toObject().value("name").toString();
+
+    const auto game = obj.value("game").toObject();
+    campaign.gameId = game.value("id").toString();
+    campaign.gameName = game.value("displayName").toString();
+    campaign.gameBoxArtUrl = game.value("boxArtURL").toString();
+
+    campaign.status = obj.value("status").toString();
+    campaign.startAt =
+        QDateTime::fromString(obj.value("startAt").toString(), Qt::ISODate);
+    campaign.endAt =
+        QDateTime::fromString(obj.value("endAt").toString(), Qt::ISODate);
+    campaign.description = obj.value("description").toString();
+    campaign.detailsUrl = obj.value("detailsURL").toString();
+    campaign.accountLinkUrl = obj.value("accountLinkURL").toString();
+    campaign.isAccountConnected =
+        obj.value("self").toObject().value("isAccountConnected").toBool(false);
+
+    const auto allow = obj.value("allow").toObject();
+    campaign.allowIsEnabled = allow.value("isEnabled").toBool(true);
+    const auto allowedChannels = allow.value("channels").toArray();
+    for (const auto &chVal : allowedChannels)
+    {
+        const auto chObj = chVal.toObject();
+        const auto chId = chObj.value("id").toString();
+        const auto chName = chObj.value("name").toString();
+        if (!chId.isEmpty())
+        {
+            campaign.allowedChannelIds.append(chId);
+        }
+        if (!chName.isEmpty())
+        {
+            campaign.allowedChannelLogins.append(chName.toLower());
+        }
+    }
+
+    const auto dropsArray = obj.value("timeBasedDrops").toArray();
+    for (const auto &dropVal : dropsArray)
+    {
+        const auto dropObj = dropVal.toObject();
+        GqlTimeBasedDrop drop;
+        drop.id = dropObj.value("id").toString();
+        drop.name = dropObj.value("name").toString();
+        drop.requiredMinutesWatched =
+            dropObj.value("requiredMinutesWatched").toInt(0);
+        drop.requiredSubs = dropObj.value("requiredSubs").toInt(0);
+
+        const auto preconditions = dropObj.value("preconditionDrops").toArray();
+        for (const auto &preVal : preconditions)
+        {
+            const auto preId = preVal.toObject().value("id").toString();
+            if (!preId.isEmpty())
+            {
+                drop.preconditionDropIds.append(preId);
+            }
+        }
+
+        bool benefitAwarded = false;
+        const auto benefitEdges = dropObj.value("benefitEdges").toArray();
+        for (const auto &edgeVal : benefitEdges)
+        {
+            const auto benefitObj =
+                edgeVal.toObject().value("benefit").toObject();
+            GqlDropBenefit benefit;
+            benefit.id = benefitObj.value("id").toString();
+            benefit.name = benefitObj.value("name").toString();
+            benefit.imageAssetUrl = benefitObj.value("imageAssetURL").toString();
+            benefit.distributionType =
+                benefitObj.value("distributionType").toString();
+            if (!benefit.id.isEmpty() && claimedBenefitIds.contains(benefit.id))
+            {
+                benefitAwarded = true;
+            }
+            drop.benefits.append(std::move(benefit));
+        }
+
+        const auto selfObj = dropObj.value("self").toObject();
+        drop.currentMinutesWatched =
+            selfObj.value("currentMinutesWatched").toInt(0);
+        drop.isClaimed = selfObj.value("isClaimed").toBool(false);
+        drop.dropInstanceId = selfObj.value("dropInstanceID").toString();
+        if (!drop.isClaimed && benefitAwarded &&
+            drop.requiredMinutesWatched > 0 &&
+            drop.currentMinutesWatched >= drop.requiredMinutesWatched &&
+            drop.dropInstanceId.isEmpty())
+        {
+            drop.isClaimed = true;
+        }
+
+        campaign.drops.append(std::move(drop));
+    }
+
+    return campaign;
+}
+
+}  // namespace
+
+void TwitchGql::claimChannelPoints(
+    const QString &channelId, const QString &claimId, const QString &oauthToken,
+    std::function<void(GqlChannelPointBonusClaimResult)> successCallback,
+    std::function<void(const QString &)> failureCallback)
+{
+    static const char *mutation = R"(
+        mutation ClaimCommunityPoints($input: ClaimCommunityPointsInput!) {
+            claimCommunityPoints(input: $input) {
+                claim {
+                    pointsEarnedTotal
+                    pointsEarnedBaseline
+                }
+                currentPoints
+                error {
+                    code
+                }
+            }
+        }
+    )";
+
+    QJsonObject input;
+    input.insert("channelID", channelId);
+    input.insert("claimID", claimId);
+    QJsonObject variables;
+    variables.insert("input", input);
+
+    makeTvInlineGqlRequest(mutation, variables, oauthToken)
+        .onSuccess([successCallback = std::move(successCallback),
+                    failureCallback = std::move(failureCallback)](
+                       const NetworkResult &result) {
+            const auto value = result.parseJsonValue();
+            const auto gqlError = extractFirstGqlErrorMessage(value);
+            if (!gqlError.isEmpty())
+            {
+                failureCallback(gqlError);
+                return;
+            }
+
+            const auto data = payloadDataObject(value);
+            const auto payload = data.value("claimCommunityPoints").toObject();
+            if (payload.isEmpty())
+            {
+                failureCallback("Could not parse claimCommunityPoints response");
+                return;
+            }
+
+            const auto errorObj = payload.value("error").toObject();
+            const auto errorCode = errorObj.value("code").toString();
+            if (!errorCode.isEmpty())
+            {
+                failureCallback("Claim rejected (" + errorCode + ")");
+                return;
+            }
+
+            GqlChannelPointBonusClaimResult out;
+            out.newBalance =
+                jsonIntegerValue(payload.value("currentPoints"), -1);
+
+            const auto claimObj = payload.value("claim").toObject();
+            qint64 earned =
+                jsonIntegerValue(claimObj.value("pointsEarnedTotal"), -1);
+            if (earned < 0)
+            {
+                earned = jsonIntegerValue(
+                    claimObj.value("pointsEarnedBaseline"), 50);
+            }
+            out.pointsEarned = earned;
+
+            successCallback(out);
+        })
+        .onError([failureCallback](const NetworkResult &result) {
+            failureCallback("Network Error: " + result.formatError());
+        })
+        .execute();
+}
+
+void TwitchGql::sendSpadeEvents(
+    const QString &gzipBase64Data, const QString &oauthToken,
+    std::function<void(bool)> successCallback,
+    std::function<void(const QString &)> failureCallback)
+{
+    static const char *mutation = R"(
+        mutation SendEvents($input: SendSpadeEventsInput!) {
+            sendSpadeEvents(input: $input) {
+                statusCode
+            }
+        }
+    )";
+
+    QJsonObject input;
+    input.insert("data", gzipBase64Data);
+    input.insert("repository", QStringLiteral("twilight"));
+    input.insert("encoding", QStringLiteral("GZIP_B64"));
+    QJsonObject variables;
+    variables.insert("input", input);
+
+    makeGqlRequest(mutation, variables, oauthToken)
+        .onSuccess([successCallback = std::move(successCallback),
+                    failureCallback = std::move(failureCallback)](
+                       const NetworkResult &result) {
+            const auto value = result.parseJsonValue();
+            const auto gqlError = extractFirstGqlErrorMessage(value);
+            if (!gqlError.isEmpty())
+            {
+                failureCallback(gqlError);
+                return;
+            }
+
+            const auto data = payloadDataObject(value);
+            const auto statusCode =
+                data.value("sendSpadeEvents").toObject().value("statusCode").toInt();
+            successCallback(statusCode == 204);
+        })
+        .onError([failureCallback](const NetworkResult &result) {
+            failureCallback("Network Error: " + result.formatError());
+        })
+        .execute();
+}
+
+void TwitchGql::getPlaybackAccessToken(
+    const QString &channelLogin, const QString &oauthToken,
+    std::function<void(GqlPlaybackAccessToken)> successCallback,
+    std::function<void(const QString &)> failureCallback)
+{
+    static const char *query = R"(
+        query PlaybackAccessToken($login: String!) {
+            streamPlaybackAccessToken(
+                channelName: $login
+                params: { platform: "web", playerBackend: "mediaplayer", playerType: "site" }
+            ) {
+                value
+                signature
+            }
+        }
+    )";
+
+    QJsonObject variables;
+    variables.insert("login", channelLogin.toLower());
+
+    makeGqlRequest(query, variables, oauthToken)
+        .onSuccess([successCallback = std::move(successCallback),
+                    failureCallback = std::move(failureCallback)](
+                       const NetworkResult &result) {
+            const auto value = result.parseJsonValue();
+            const auto gqlError = extractFirstGqlErrorMessage(value);
+            if (!gqlError.isEmpty())
+            {
+                failureCallback(gqlError);
+                return;
+            }
+
+            const auto pat =
+                payloadDataObject(value).value("streamPlaybackAccessToken").toObject();
+            GqlPlaybackAccessToken out;
+            out.value = pat.value("value").toString();
+            out.signature = pat.value("signature").toString();
+            if (out.value.isEmpty() || out.signature.isEmpty())
+            {
+                failureCallback("Missing playback access token");
+                return;
+            }
+
+            successCallback(std::move(out));
+        })
+        .onError([failureCallback](const NetworkResult &result) {
+            failureCallback("Network Error: " + result.formatError());
+        })
+        .execute();
+}
+
+void TwitchGql::getDropCampaigns(
+    const QString &oauthToken,
+    std::function<void(QVector<GqlDropCampaign>)> successCallback,
+    std::function<void(const QString &)> failureCallback)
+{
+    static const char *query = R"(
+        query DropCampaigns {
+            currentUser {
+                id
+                dropCampaigns {
+                    id
+                    name
+                    owner { id name }
+                    game {
+                        id
+                        displayName
+                        boxArtURL
+                    }
+                    status
+                    startAt
+                    endAt
+                    description
+                    detailsURL
+                    accountLinkURL
+                    self {
+                        isAccountConnected
+                    }
+                    allow {
+                        isEnabled
+                        channels {
+                            id
+                            name
+                        }
+                    }
+                    timeBasedDrops {
+                        id
+                        name
+                        requiredMinutesWatched
+                        requiredSubs
+                        preconditionDrops {
+                            id
+                        }
+                        benefitEdges {
+                            benefit {
+                                id
+                                name
+                                imageAssetURL
+                                distributionType
+                            }
+                        }
+                        self {
+                            currentMinutesWatched
+                            isClaimed
+                            dropInstanceID
+                        }
+                    }
+                }
+            }
+        }
+    )";
+
+    makeGqlRequest(query, QJsonObject{}, oauthToken)
+        .onSuccess([successCallback = std::move(successCallback),
+                    failureCallback = std::move(failureCallback)](
+                       const NetworkResult &result) {
+            const auto value = result.parseJsonValue();
+            const auto gqlError = extractFirstGqlErrorMessage(value);
+            if (!gqlError.isEmpty())
+            {
+                failureCallback(gqlError);
+                return;
+            }
+
+            const auto currentUser =
+                payloadDataObject(value).value("currentUser").toObject();
+            if (currentUser.isEmpty())
+            {
+                failureCallback("Unable to fetch drop campaigns (unauthenticated)");
+                return;
+            }
+
+            QVector<GqlDropCampaign> campaigns;
+            const auto arr = currentUser.value("dropCampaigns").toArray();
+            campaigns.reserve(arr.size());
+            const QSet<QString> emptyClaimed;
+            for (const auto &item : arr)
+            {
+                campaigns.append(
+                    parseDropCampaignObject(item.toObject(), emptyClaimed));
+            }
+            successCallback(std::move(campaigns));
+        })
+        .onError([failureCallback](const NetworkResult &result) {
+            failureCallback("Network Error: " + result.formatError());
+        })
+        .execute();
+}
+
+void TwitchGql::getDropInventory(
+    const QString &oauthToken,
+    std::function<void(QVector<GqlDropCampaign>)> successCallback,
+    std::function<void(const QString &)> failureCallback)
+{
+    static const QString operationName = QStringLiteral("Inventory");
+    static const QString sha256Hash = QStringLiteral(
+        "d86775d0ef16a63a33ad52e80eaff963b2d5b72fada7c991504a57496e1d8e4b");
+
+    QJsonObject variables;
+    variables.insert("fetchRewardCampaigns", false);
+
+    makePersistedGqlRequest(operationName, sha256Hash, variables, oauthToken,
+                            false)
+        .onSuccess([successCallback = std::move(successCallback),
+                    failureCallback = std::move(failureCallback)](
+                       const NetworkResult &result) {
+            const auto value = result.parseJsonValue();
+            const auto gqlError = extractFirstGqlErrorMessage(value);
+            if (!gqlError.isEmpty())
+            {
+                failureCallback(gqlError);
+                return;
+            }
+
+            const auto currentUser =
+                payloadDataObject(value).value("currentUser").toObject();
+            if (currentUser.isEmpty())
+            {
+                failureCallback("Unable to fetch drops inventory (unauthenticated)");
+                return;
+            }
+
+            const auto inventory = currentUser.value("inventory").toObject();
+            QSet<QString> claimedBenefits;
+            for (const auto &ev : inventory.value("gameEventDrops").toArray())
+            {
+                const auto id = ev.toObject().value("id").toString();
+                if (!id.isEmpty())
+                {
+                    claimedBenefits.insert(id);
+                }
+            }
+
+            QVector<GqlDropCampaign> campaigns;
+            const auto arr =
+                inventory.value("dropCampaignsInProgress").toArray();
+            campaigns.reserve(arr.size());
+            for (const auto &item : arr)
+            {
+                campaigns.append(
+                    parseDropCampaignObject(item.toObject(), claimedBenefits));
+            }
+            successCallback(std::move(campaigns));
+        })
+        .onError([failureCallback](const NetworkResult &result) {
+            failureCallback("Network Error: " + result.formatError());
+        })
+        .execute();
+}
+
+void TwitchGql::claimDropReward(
+    const QString &dropInstanceId, const QString &oauthToken,
+    std::function<void(GqlDropClaimOutcome)> successCallback,
+    std::function<void(const QString &)> failureCallback)
+{
+    static const QString operationName =
+        QStringLiteral("DropsPage_ClaimDropRewards");
+    static const QString sha256Hash = QStringLiteral(
+        "a455deea71bdc9015b78eb49f4acfbce8baa7ccbedd28e549bb025bd0f751930");
+
+    QJsonObject input;
+    input.insert("dropInstanceID", dropInstanceId);
+    QJsonObject variables;
+    variables.insert("input", input);
+
+    makePersistedGqlRequest(operationName, sha256Hash, variables, oauthToken,
+                            false)
+        .onSuccess([successCallback = std::move(successCallback),
+                    failureCallback = std::move(failureCallback)](
+                       const NetworkResult &result) {
+            const auto value = result.parseJsonValue();
+            const auto gqlError = extractFirstGqlErrorMessage(value);
+            if (!gqlError.isEmpty())
+            {
+                failureCallback(gqlError);
+                return;
+            }
+
+            const auto status = payloadDataObject(value)
+                                    .value("claimDropRewards")
+                                    .toObject()
+                                    .value("status")
+                                    .toString();
+            if (status == QLatin1String("ELIGIBLE_FOR_ALL"))
+            {
+                successCallback(GqlDropClaimOutcome::Claimed);
+                return;
+            }
+            if (status == QLatin1String("DROP_INSTANCE_ALREADY_CLAIMED"))
+            {
+                successCallback(GqlDropClaimOutcome::AlreadyClaimed);
+                return;
+            }
+
+            failureCallback(
+                status.isEmpty()
+                    ? QStringLiteral("Twitch did not claim this drop (no status)")
+                    : QStringLiteral("Twitch did not claim this drop (%1)")
+                          .arg(status));
+        })
+        .onError([failureCallback](const NetworkResult &result) {
+            failureCallback("Network Error: " + result.formatError());
         })
         .execute();
 }

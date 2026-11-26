@@ -403,6 +403,21 @@ public:
         return nullptr;
     }
 
+    WatchHeartbeatService *getWatchHeartbeat() override
+    {
+        return nullptr;
+    }
+
+    DropPlaybackService *getDropPlayback() override
+    {
+        return nullptr;
+    }
+
+    DropsService *getDrops() override
+    {
+        return nullptr;
+    }
+
     QTemporaryDir settingsDir;
     Modes modes_;
     Paths paths_{modes_};

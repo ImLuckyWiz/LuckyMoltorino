@@ -59,11 +59,14 @@
 #include "providers/seventv/SeventvPaints.hpp"
 #include "providers/seventv/SeventvPersonalEmotes.hpp"
 #include "providers/twitch/ChannelPointReward.hpp"
+#include "providers/twitch/DropPlaybackService.hpp"
+#include "providers/twitch/DropsService.hpp"
 #include "providers/twitch/PubSubManager.hpp"
 #include "providers/twitch/PubSubMessages.hpp"
 #include "providers/twitch/TwitchChannel.hpp"
 #include "providers/twitch/TwitchIrcServer.hpp"
 #include "providers/twitch/TwitchUsers.hpp"
+#include "providers/twitch/WatchHeartbeatService.hpp"
 #include "singletons/CrashHandler.hpp"
 #include "singletons/Fonts.hpp"
 #include "singletons/helper/LoggingChannel.hpp"
@@ -236,6 +239,9 @@ Application::Application(Settings &_settings, const Paths &paths,
     , kickChatServer(new KickChatServer)
     , youtubeChatServer(new YouTubeChatServer)
     , tiktokChatServer(new TikTokChatServer)
+    , watchHeartbeat(new WatchHeartbeatService)
+    , dropPlayback(new DropPlaybackService)
+    , dropsService(new DropsService)
     , dailyMessage(new MoltorinoDailyMessage)
 #ifdef CHATTERINO_HAVE_PLUGINS
     , plugins(new PluginController(paths))
@@ -283,6 +289,8 @@ void Application::initialize(Settings &settings, const Modes &modes,
     this->kickChatServer->initialize();
     this->youtubeChatServer->initialize();
     this->tiktokChatServer->initialize();
+    this->dropPlayback->initialize();
+    this->dropsService->initialize();
 
     this->notifications->initialize();
 
@@ -860,6 +868,24 @@ TikTokChatServer *Application::getTikTokChatServer()
     return this->tiktokChatServer.get();
 }
 
+WatchHeartbeatService *Application::getWatchHeartbeat()
+{
+    assertInGuiThread();
+    return this->watchHeartbeat.get();
+}
+
+DropPlaybackService *Application::getDropPlayback()
+{
+    assertInGuiThread();
+    return this->dropPlayback.get();
+}
+
+DropsService *Application::getDrops()
+{
+    assertInGuiThread();
+    return this->dropsService.get();
+}
+
 void Application::aboutToQuit()
 {
     this->chatRecordings->shutdown();
@@ -883,6 +909,21 @@ void Application::stop()
 {
     getMoltorinoPresence()->stopHeartbeat();
     this->nmServer.reset();
+    if (this->dropsService)
+    {
+        this->dropsService->stop();
+    }
+    if (this->dropPlayback)
+    {
+        this->dropPlayback->stop();
+    }
+    if (this->watchHeartbeat)
+    {
+        this->watchHeartbeat->stop();
+    }
+    this->dropsService.reset();
+    this->dropPlayback.reset();
+    this->watchHeartbeat.reset();
     this->tiktokChatServer.reset();
     this->dailyMessage.reset();
     this->chatRecordings.reset();

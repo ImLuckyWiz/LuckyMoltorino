@@ -127,3 +127,15 @@ if (CHATTERINO_STATIC_QT_BUILD)
 endif ()
 
 gtest_discover_tests(${PROJECT_NAME})
+
+add_executable(moltorino-watch-drops-test
+    ${CMAKE_CURRENT_LIST_DIR}/src/Test.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/src/TwitchWatchAndDrops.cpp
+)
+target_link_libraries(moltorino-watch-drops-test PRIVATE chatterino-lib chatterino-mocks gtest gmock)
+target_include_directories(moltorino-watch-drops-test PRIVATE "${CMAKE_CURRENT_LIST_DIR}/src")
+set_target_properties(moltorino-watch-drops-test PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/bin"
+    RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}/bin"
+)

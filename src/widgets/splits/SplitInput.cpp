@@ -3393,6 +3393,12 @@ bool SplitInput::eventFilter(QObject *obj, QEvent *event)
                 return true;
             }
 
+            if (tc->hasAvailableBonusClaim() && !tc->isBonusClaimInFlight())
+            {
+                tc->claimAvailableBonusPoints(false);
+                return true;
+            }
+
 #if MOLTORINO_ENABLE_CHANNEL_POINT_REWARDS
             if (getSettings()->openRewardsWithChannelPointsClick)
             {
@@ -5459,17 +5465,46 @@ void SplitInput::updateChannelPointsDisplay(TwitchChannel *channel)
 
     const auto balance = channel->channelPointBalance();
     const auto &error = channel->lastChannelPointsError();
-    const auto text =
-        (balance < 0 && !error.isEmpty()) ? QStringLiteral("--")
-                                          : formatChannelPointsValue(balance);
+    const bool hasChest = channel->hasAvailableBonusClaim();
+    const bool claimingChest = channel->isBonusClaimInFlight();
+
+    auto text = (balance < 0 && !error.isEmpty())
+                    ? QStringLiteral("--")
+                    : formatChannelPointsValue(balance);
+    if (claimingChest)
+    {
+        text = QStringLiteral("...");
+    }
+    else if (hasChest)
+    {
+        text = QStringLiteral("★ ") + text;
+    }
+
     auto tooltip =
         (balance < 0 && !error.isEmpty())
             ? QStringLiteral("Channel Points unavailable")
             : formatChannelPointsToolTip(balance);
+    if (hasChest)
+    {
+        tooltip += QStringLiteral("\nBonus chest available — click to claim");
+    }
     if (!error.isEmpty())
     {
         tooltip += "\nError: " + error;
     }
+
+    QPalette pointsPalette = this->ui_.channelPointsLabel->palette();
+    if (hasChest || claimingChest)
+    {
+        pointsPalette.setColor(QPalette::WindowText, QColor(0xf5, 0x9e, 0x0b));
+    }
+    else
+    {
+        auto channelPointsColor = this->theme->splits.input.text;
+        channelPointsColor.setAlphaF(0.72F);
+        pointsPalette.setColor(QPalette::WindowText, channelPointsColor);
+    }
+    this->ui_.channelPointsLabel->setPalette(pointsPalette);
 
     if (this->ui_.channelPointsLabel->text() != text)
     {

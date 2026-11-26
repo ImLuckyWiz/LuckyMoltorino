@@ -62,6 +62,10 @@ public:
 
     struct {
         Signal<const QJsonObject &> updated;
+    } userDrops;
+
+    struct {
+        Signal<const QJsonObject &> updated;
     } chatWarning;
 
     struct {
@@ -77,6 +81,7 @@ public:
     void listenToRaids(const QString &channelID);
     void listenToUserPredictions(const QString &userID, const QString &authToken);
     void listenToUserChannelPoints(const QString &userID, const QString &authToken);
+    void listenToUserDrops(const QString &userID, const QString &authToken);
     void listenToChatWarnings(const QString &userID, const QString &authToken);
     void forgetUserAuthenticatedTopics(const QString &userID);
     void forgetOtherUserAuthenticatedTopics(const QString &activeUserID);

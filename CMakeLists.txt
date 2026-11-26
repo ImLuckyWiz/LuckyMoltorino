@@ -103,8 +103,8 @@ endif()
 
 project(chatterino
     VERSION 15.5.1
-    DESCRIPTION "Moltorino chat client"
-    HOMEPAGE_URL "https://moltorino.com/"
+    DESCRIPTION "LuckyMoltorino chat client"
+    HOMEPAGE_URL "https://github.com/ImLuckyWiz/LuckyMoltorino"
 )
 
 if(APPLE)

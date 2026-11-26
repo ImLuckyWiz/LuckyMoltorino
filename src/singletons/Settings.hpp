@@ -439,6 +439,7 @@ public:
     QSizeSetting predictionPopupSize = {"/appearance/popups/prediction", {}};
     QSizeSetting editorPopupSize = {"/appearance/popups/editor", {}};
     QSizeSetting rewardsPopupSize = {"/appearance/popups/rewards", {}};
+    QSizeSetting dropsPopupSize = {"/moltorino/drops/popupSize", {460, 560}};
     QSizeSetting vanityPopupSize = {"/appearance/popups/vanity", {}};
     QSizeSetting gifPopupSize = {"/appearance/popups/gifs", {}};
     QSizeSetting usercardPopupSize = {"/appearance/popups/usercard", {}};
@@ -1179,6 +1180,10 @@ public:
         "/moltorino/predictions/showChannelPoints", true};
     BoolSetting openRewardsWithChannelPointsClick{
         "/moltorino/channelPoints/openRewardsWithBalanceClick", true};
+    BoolSetting autoClaimChannelPoints{
+        "/moltorino/channelPoints/autoClaimBonusChests", true};
+    BoolSetting notifyChannelPointsBonusClaimed{
+        "/moltorino/channelPoints/notifyBonusClaimed", false};
     BoolSetting rewardsCloseOnFocusLoss{
         "/moltorino/channelPoints/closeOnFocusLoss", true};
     BoolSetting rewardsCloseAfterRedeem{
@@ -1187,6 +1192,16 @@ public:
         "/moltorino/channelPoints/returnToListAfterRedeem", false};
     BoolSetting enableGigantifyEmotes{
         "/moltorino/channelPoints/enableGigantifyEmotes", true};
+    BoolSetting enableWatchHeartbeat{
+        "/moltorino/watch/enableHeartbeat", true};
+    BoolSetting trackStreamlinkWatchTime{
+        "/moltorino/watch/trackStreamlink", true};
+    BoolSetting enableDropsTracking{
+        "/moltorino/drops/enabled", true};
+    BoolSetting autoClaimDrops{
+        "/moltorino/drops/autoClaim", true};
+    BoolSetting notifyDropsClaimed{
+        "/moltorino/drops/notifyClaimed", true};
     BoolSetting enableTwitchGifs{"/moltorino/chat/enableTwitchGifs", true};
     BoolSetting twitchGifsAsEmotes{"/moltorino/chat/twitchGifsAsEmotes", false};
     BoolSetting highQualityTwitchGifs{"/moltorino/chat/highQualityTwitchGifs",

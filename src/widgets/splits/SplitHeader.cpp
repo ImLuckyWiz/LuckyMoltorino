@@ -29,6 +29,7 @@
 #include "providers/twitch/TwitchIrcServer.hpp"
 #include "providers/twitch/TwitchUser.hpp"
 #include "providers/twitch/TwitchUsers.hpp"
+#include "providers/twitch/WatchHeartbeatService.hpp"
 #include "providers/youtube/YouTubeChannel.hpp"
 #include "singletons/Fonts.hpp"
 #include "singletons/Settings.hpp"
@@ -44,6 +45,7 @@
 #include "widgets/buttons/SvgButton.hpp"
 #include "widgets/dialogs/ChannelManagementDialog.hpp"
 #include "widgets/dialogs/ChatAutomationDialog.hpp"
+#include "widgets/dialogs/DropsDialog.hpp"
 #include "widgets/dialogs/SettingsDialog.hpp"
 #include "widgets/helper/AutoModReviewBar.hpp"
 #include "widgets/helper/ChannelView.hpp"
@@ -971,6 +973,27 @@ std::unique_ptr<QMenu> SplitHeader::createMainMenu()
 
         if (twitchChannel)
         {
+            if (auto *app = tryGetApp(); app && app->getWatchHeartbeat())
+            {
+                const auto channelLogin = twitchChannel->getName();
+                const bool watching =
+                    app->getWatchHeartbeat()->isWatching(channelLogin);
+                menu->addAction(
+                    watching ? QStringLiteral("Stop watching (Points & Drops)")
+                             : QStringLiteral("Watch for Points & Drops"),
+                    this->split_, [channelLogin] {
+                        if (auto *a = tryGetApp(); a && a->getWatchHeartbeat())
+                        {
+                            a->getWatchHeartbeat()->toggleWatching(
+                                channelLogin);
+                        }
+                    });
+            }
+            menu->addAction(QStringLiteral("Twitch Drops..."), this->split_,
+                            [parent = this->split_] {
+                                DropsDialog::showDialog(parent);
+                            });
+
             auto managedChannel =
                 std::dynamic_pointer_cast<TwitchChannel>(selected);
             auto *manageAction =

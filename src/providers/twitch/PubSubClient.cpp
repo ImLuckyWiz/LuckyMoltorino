@@ -431,6 +431,31 @@ void PubSubClient::handleMessageResponse(const PubSubMessageMessage &message)
 
         this->manager_.chatWarning.updated.invoke(payload);
     }
+    else if (message.topic.startsWith("user-drop-events."))
+    {
+        if (message.messageObject.empty())
+        {
+            qCDebug(chatterinoPubSub)
+                << "Malformed user-drop-events message";
+            return;
+        }
+
+        const auto type = message.messageObject.value("type").toString();
+        const auto data = message.messageObject.value("data").toObject();
+        if (type != "drop-progress" && type != "drop-claim")
+        {
+            qCDebug(chatterinoPubSub)
+                << "Unhandled user-drop-events type:" << type;
+            return;
+        }
+
+        QJsonObject payload;
+        payload["type"] = type;
+        payload["topic"] = message.topic;
+        payload["data"] = data;
+
+        this->manager_.userDrops.updated.invoke(payload);
+    }
 }
 
 }

@@ -1568,6 +1568,54 @@ MoltorinoPage::MoltorinoPage()
             "Use /redeem to open the rewards menu.")
         ->addTo(*view);
 
+    SettingWidget::checkbox("Auto-claim channel point bonus chests",
+                            s.autoClaimChannelPoints)
+        ->setTooltip("Automatically claim periodic Twitch channel point bonus "
+                     "chests as they become available.")
+        ->addTo(*view);
+
+    SettingWidget::checkbox(
+        "Show chat notice when a bonus chest is auto-claimed",
+        s.notifyChannelPointsBonusClaimed)
+        ->setTooltip("Post a local system message in chat when a bonus chest "
+                     "is claimed automatically.")
+        ->addTo(*view);
+
+    view->addTitle("Watch time and Twitch Drops");
+    view->addDescription(
+        "Send Twitch watch-time heartbeats, track Drops progress, and "
+        "automatically claim earned Drops.");
+
+    SettingWidget::checkbox("Enable watch-time heartbeats",
+                            s.enableWatchHeartbeat)
+        ->setTooltip("Report minute-watched heartbeats for the watched channel "
+                     "(required to earn watch-time channel points and Drops).")
+        ->addTo(*view);
+
+    SettingWidget::checkbox("Track Streamlink watch sessions automatically",
+                            s.trackStreamlinkWatchTime)
+        ->setTooltip("Automatically start watch-time tracking when opening a "
+                     "Twitch stream in Streamlink.")
+        ->addTo(*view);
+
+    SettingWidget::checkbox("Enable Twitch Drops tracking",
+                            s.enableDropsTracking)
+        ->setTooltip("Poll lowest-quality HLS segment headers (without "
+                     "downloading video) and sync Twitch Drops progress.")
+        ->addTo(*view);
+
+    SettingWidget::checkbox("Auto-claim completed Twitch Drops",
+                            s.autoClaimDrops)
+        ->setTooltip("Automatically claim Drops rewards as soon as they reach "
+                     "100% and preconditions are met.")
+        ->addTo(*view);
+
+    SettingWidget::checkbox("Show notifications when Drops are claimed",
+                            s.notifyDropsClaimed)
+        ->setTooltip("Show a toast and system chat notice when a Drop reward "
+                     "is claimed.")
+        ->addTo(*view);
+
     SettingWidget::checkbox("Close rewards when you click away",
                             s.rewardsCloseOnFocusLoss)
         ->setTooltip("Close the rewards popup when you click away from it.")

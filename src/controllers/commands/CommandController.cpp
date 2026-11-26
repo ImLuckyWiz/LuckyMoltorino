@@ -41,6 +41,7 @@
 #include "controllers/commands/builtin/twitch/UpdateChannel.hpp"
 #include "controllers/commands/builtin/twitch/UpdateColor.hpp"
 #include "controllers/commands/builtin/twitch/Warn.hpp"
+#include "controllers/commands/builtin/twitch/WatchAndDrops.hpp"
 #include "controllers/commands/Command.hpp"
 #include "controllers/commands/CommandContext.hpp"
 #include "controllers/commands/CommandModel.hpp"
@@ -703,6 +704,9 @@ CommandController::CommandController(const Paths &paths)
 
     this->registerCommand("/poll", &commands::createPoll);
     this->registerCommand("/redeem", &commands::openChannelPointRewards);
+    this->registerCommand("/claim", &commands::claimChannelPointsBonus);
+    this->registerCommand("/drops", &commands::openDropsDialog);
+    this->registerCommand("/watch", &commands::toggleWatchChannel);
     this->registerCommand("/gif", &commands::openGifPicker);
     this->registerCommand("/gigantify", &commands::sendGigantifiedEmote);
     this->registerCommand("/cancelpoll", &commands::cancelPoll);

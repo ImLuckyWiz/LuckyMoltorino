@@ -475,14 +475,12 @@ QString getUserPointsChannelId(const QJsonObject &payload)
     }
 
     const auto data = dataValue.toObject();
-    const auto balanceValue = data.value("balance");
-    if (!balanceValue.isObject())
-    {
-        return {};
-    }
-
-    const auto balanceObj = balanceValue.toObject();
+    const auto balanceObj = data.value("balance").toObject();
     auto channelId = balanceObj.value("channel_id").toString();
+    if (channelId.isEmpty())
+    {
+        channelId = data.value("claim").toObject().value("channel_id").toString();
+    }
     if (channelId.isEmpty())
     {
         channelId = data.value("channel_id").toString();
@@ -931,7 +929,13 @@ TwitchChannel::TwitchChannel(const QString &name, bool anonymous)
         this->lastChannelPointsUpdateAt_ = QDateTime();
         const bool hadPointsError = !this->lastChannelPointsError_.isEmpty();
         this->lastChannelPointsError_.clear();
-        if (this->channelPoints_.exchange(-1) != -1 || hadPointsError)
+        const bool hadBonusClaim =
+            !this->availableBonusClaimId_.isEmpty() || this->bonusClaimInFlight_;
+        this->availableBonusClaimId_.clear();
+        this->bonusClaimInFlight_ = false;
+        this->recentClaimedBonusIds_.clear();
+        if (this->channelPoints_.exchange(-1) != -1 || hadPointsError ||
+            hadBonusClaim)
         {
             this->channelPointsChanged.invoke();
         }
@@ -5353,12 +5357,6 @@ void TwitchChannel::handleUserPointsUpdate(const QJsonObject &payload)
     assertInGuiThread();
 
     const QString type = payload.value("type").toString();
-
-    if (type != "points-earned" && type != "points-spent")
-    {
-        return;
-    }
-
     const auto dataValue = payload.value("data");
     if (!dataValue.isObject())
     {
@@ -5369,6 +5367,42 @@ void TwitchChannel::handleUserPointsUpdate(const QJsonObject &payload)
     }
 
     const auto data = dataValue.toObject();
+
+    if (type == "claim-available")
+    {
+        const auto claimObj = data.value("claim").toObject();
+        const auto claimId = claimObj.value("id").toString().trimmed();
+        auto channelId = claimObj.value("channel_id").toString().trimmed();
+        if (channelId.isEmpty())
+        {
+            channelId = data.value("channel_id").toString().trimmed();
+        }
+        if (claimId.isEmpty() || channelId != this->roomId())
+        {
+            return;
+        }
+        if (this->availableBonusClaimId_ == claimId ||
+            std::ranges::find(this->recentClaimedBonusIds_, claimId) !=
+                this->recentClaimedBonusIds_.end())
+        {
+            return;
+        }
+
+        this->availableBonusClaimId_ = claimId;
+        this->channelPointsChanged.invoke();
+
+        if (getSettings()->autoClaimChannelPoints)
+        {
+            this->claimAvailableBonusPoints(true);
+        }
+        return;
+    }
+
+    if (type != "points-earned" && type != "points-spent")
+    {
+        return;
+    }
+
     const auto balanceValue = data.value("balance");
     if (!balanceValue.isObject())
     {
@@ -5396,12 +5430,29 @@ void TwitchChannel::handleUserPointsUpdate(const QJsonObject &payload)
         return;
     }
 
+    bool claimCleared = false;
+    if (type == "points-earned")
+    {
+        const auto reasonCode =
+            data.value("point_gain").toObject().value("reason_code").toString();
+        if (reasonCode == QLatin1String("CLAIM") &&
+            !this->availableBonusClaimId_.isEmpty())
+        {
+            this->availableBonusClaimId_.clear();
+            claimCleared = true;
+        }
+    }
+
     const auto balanceField = balanceObj.value("balance");
     if (!balanceField.isDouble())
     {
         qCWarning(chatterinoTwitch)
             << "[Points] Ignoring malformed PubSub payload for" << this->getName()
             << "type:" << type << "missing numeric balance";
+        if (claimCleared)
+        {
+            this->channelPointsChanged.invoke();
+        }
         return;
     }
 
@@ -5409,6 +5460,10 @@ void TwitchChannel::handleUserPointsUpdate(const QJsonObject &payload)
 
     if (this->channelPoints_.load() == newBalance)
     {
+        if (claimCleared)
+        {
+            this->channelPointsChanged.invoke();
+        }
         return;
     }
 
@@ -6192,12 +6247,12 @@ void TwitchChannel::refreshChannelPoints()
     const auto authGeneration = this->personalAuthGeneration_;
     const auto requestToken = auth.token;
 
-    TwitchGql::getChannelPoints(
+    TwitchGql::getChannelPointsContext(
         this->getName(), auth.token,
         [weak, requestRevision, requestRoomId, authGeneration,
-         requestToken](qint64 points) {
+         requestToken](GqlChannelPointsContext ctx) {
             runInGuiThread([weak, requestRevision, requestRoomId,
-                            authGeneration, requestToken, points]() {
+                            authGeneration, requestToken, ctx]() {
                 auto shared = weak.lock();
                 if (!shared)
                 {
@@ -6224,14 +6279,24 @@ void TwitchChannel::refreshChannelPoints()
                     return;
                 }
 
-                /*
-                qCDebug(chatterinoTwitch)
-                    << "[Points] Got" << points << "channel points for"
-                    << channel->getName();
-                */
-                channel->setChannelPointBalance(points);
+                if (!ctx.availableClaimId.isEmpty() &&
+                    !channel->bonusClaimInFlight_ &&
+                    std::ranges::find(channel->recentClaimedBonusIds_,
+                                      ctx.availableClaimId) ==
+                        channel->recentClaimedBonusIds_.end())
+                {
+                    channel->availableBonusClaimId_ = ctx.availableClaimId;
+                }
+
+                channel->setChannelPointBalance(ctx.balance);
                 channel->lastChannelPointsError_.clear();
                 channel->channelPointsChanged.invoke();
+
+                if (!channel->availableBonusClaimId_.isEmpty() &&
+                    getSettings()->autoClaimChannelPoints)
+                {
+                    channel->claimAvailableBonusPoints(true);
+                }
             });
         },
         [weak, requestRevision, requestRoomId, authGeneration,
@@ -6306,6 +6371,136 @@ void TwitchChannel::setChannelPointBalance(qint64 balance)
     {
         this->channelPointsChanged.invoke();
     }
+}
+
+QString TwitchChannel::availableBonusClaimId() const
+{
+    return this->availableBonusClaimId_;
+}
+
+bool TwitchChannel::hasAvailableBonusClaim() const
+{
+    return !this->availableBonusClaimId_.isEmpty();
+}
+
+bool TwitchChannel::isBonusClaimInFlight() const
+{
+    return this->bonusClaimInFlight_;
+}
+
+void TwitchChannel::claimAvailableBonusPoints(bool automatic)
+{
+    assertInGuiThread();
+
+    const auto claimId = this->availableBonusClaimId_.trimmed();
+    const auto channelId = this->roomId();
+    if (claimId.isEmpty() || channelId.isEmpty() || this->bonusClaimInFlight_)
+    {
+        return;
+    }
+
+    if (std::ranges::find(this->recentClaimedBonusIds_, claimId) !=
+        this->recentClaimedBonusIds_.end())
+    {
+        this->availableBonusClaimId_.clear();
+        this->channelPointsChanged.invoke();
+        return;
+    }
+
+    QString authError;
+    const auto auth = MoltorinoAuth::resolveCurrentUserToken(&authError);
+    if (!auth.hasToken())
+    {
+        if (!automatic)
+        {
+            this->addSystemMessage(
+                authError.isEmpty()
+                    ? MoltorinoAuth::authRequiredMessage(
+                          QStringLiteral("claiming channel point bonuses"))
+                    : authError);
+        }
+        return;
+    }
+
+    this->bonusClaimInFlight_ = true;
+    this->channelPointsChanged.invoke();
+
+    const auto weak = this->weak_from_this();
+    TwitchGql::claimChannelPoints(
+        channelId, claimId, auth.token,
+        [weak, claimId, automatic](GqlChannelPointBonusClaimResult result) {
+            runInGuiThread([weak, claimId, automatic, result]() {
+                auto shared = weak.lock();
+                if (!shared)
+                {
+                    return;
+                }
+                auto *channel = dynamic_cast<TwitchChannel *>(shared.get());
+                if (!channel)
+                {
+                    return;
+                }
+
+                channel->bonusClaimInFlight_ = false;
+                if (channel->availableBonusClaimId_ == claimId)
+                {
+                    channel->availableBonusClaimId_.clear();
+                }
+                if (std::ranges::find(channel->recentClaimedBonusIds_,
+                                      claimId) ==
+                    channel->recentClaimedBonusIds_.end())
+                {
+                    channel->recentClaimedBonusIds_.push_back(claimId);
+                    while (channel->recentClaimedBonusIds_.size() > 32)
+                    {
+                        channel->recentClaimedBonusIds_.pop_front();
+                    }
+                }
+
+                if (result.newBalance >= 0)
+                {
+                    channel->setChannelPointBalance(result.newBalance);
+                }
+                channel->channelPointsChanged.invoke();
+
+                if (!automatic ||
+                    getSettings()->notifyChannelPointsBonusClaimed)
+                {
+                    channel->addSystemMessage(
+                        QStringLiteral("Claimed +%1 bonus channel points.")
+                            .arg(result.pointsEarned));
+                }
+            });
+        },
+        [weak, claimId, automatic](const QString &error) {
+            runInGuiThread([weak, claimId, automatic, error]() {
+                auto shared = weak.lock();
+                if (!shared)
+                {
+                    return;
+                }
+                auto *channel = dynamic_cast<TwitchChannel *>(shared.get());
+                if (!channel)
+                {
+                    return;
+                }
+
+                channel->bonusClaimInFlight_ = false;
+                channel->channelPointsChanged.invoke();
+
+                qCWarning(chatterinoTwitch)
+                    << "[Points] Failed to claim bonus chest" << claimId
+                    << "for" << channel->getName() << ":" << error;
+                if (!automatic)
+                {
+                    channel->addSystemMessage(
+                        QStringLiteral("Failed to claim bonus channel points: %1")
+                            .arg(normalizeMoltorinoAuthError(
+                                QStringLiteral("claiming channel point bonuses"),
+                                error)));
+                }
+            });
+        });
 }
 
 std::shared_ptr<TwitchChannel> TwitchChannel::sharedFromThis()

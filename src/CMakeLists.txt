@@ -112,6 +112,8 @@ set(SOURCE_FILES
         controllers/commands/builtin/twitch/BlockedTerms.hpp
         controllers/commands/builtin/twitch/ChannelPoints.cpp
         controllers/commands/builtin/twitch/ChannelPoints.hpp
+        controllers/commands/builtin/twitch/WatchAndDrops.cpp
+        controllers/commands/builtin/twitch/WatchAndDrops.hpp
         controllers/commands/builtin/twitch/ChatSettings.cpp
         controllers/commands/builtin/twitch/ChatSettings.hpp
         controllers/commands/builtin/twitch/Chatters.cpp
@@ -637,6 +639,12 @@ set(SOURCE_FILES
         providers/twitch/ChannelManagement.hpp
         providers/twitch/ChannelPointReward.cpp
         providers/twitch/ChannelPointReward.hpp
+        providers/twitch/DropPlaybackService.cpp
+        providers/twitch/DropPlaybackService.hpp
+        providers/twitch/DropsService.cpp
+        providers/twitch/DropsService.hpp
+        providers/twitch/WatchHeartbeatService.cpp
+        providers/twitch/WatchHeartbeatService.hpp
         providers/twitch/IrcMessageHandler.cpp
         providers/twitch/IrcMessageHandler.hpp
         providers/twitch/ModerationActionLogs.cpp
@@ -952,6 +960,8 @@ set(SOURCE_FILES
         widgets/dialogs/ChannelManagementDialog.hpp
         widgets/dialogs/ChannelPointsDialog.cpp
         widgets/dialogs/ChannelPointsDialog.hpp
+        widgets/dialogs/DropsDialog.cpp
+        widgets/dialogs/DropsDialog.hpp
         widgets/dialogs/ChatAutomationDialog.cpp
         widgets/dialogs/ChatAutomationDialog.hpp
         widgets/dialogs/ColorPickerDialog.cpp
@@ -1464,7 +1474,7 @@ if (BUILD_APP)
     target_link_libraries(${EXECUTABLE_PROJECT} PUBLIC ${LIBRARY_PROJECT})
 
     set_target_directory_hierarchy(${EXECUTABLE_PROJECT})
-    set_target_properties(${EXECUTABLE_PROJECT} PROPERTIES OUTPUT_NAME "Moltorino7")
+    set_target_properties(${EXECUTABLE_PROJECT} PROPERTIES OUTPUT_NAME "LuckyMoltorino7")
 
     set(MOLTORINO_MEDIA_TOOLS_DIR "${CMAKE_BINARY_DIR}/bin/support/media" CACHE PATH
         "Directory containing the bundled ffmpeg, ffprobe and licenses")
@@ -1670,11 +1680,11 @@ if(WIN32)
     if(MOLTORINO_WINDOWS_APP_ID)
         set(_moltorino_windows_app_id "${MOLTORINO_WINDOWS_APP_ID}")
     elseif(NOT TARGET Velopack::Velopack)
-        set(_moltorino_windows_app_id "Moltorino.SourceBuild")
+        set(_moltorino_windows_app_id "MoltoBenne.LuckyMoltorino7")
     elseif(MOLTORINO_UPDATE_CHANNEL STREQUAL "internal")
-        set(_moltorino_windows_app_id "MoltoBenne.Moltorino7UpdaterTest")
+        set(_moltorino_windows_app_id "MoltoBenne.LuckyMoltorino7UpdaterTest")
     else()
-        set(_moltorino_windows_app_id "MoltoBenne.Moltorino7")
+        set(_moltorino_windows_app_id "MoltoBenne.LuckyMoltorino7")
     endif()
     target_compile_definitions(${VERSION_PROJECT} PRIVATE
         MOLTORINO_WINDOWS_APP_ID="${_moltorino_windows_app_id}")

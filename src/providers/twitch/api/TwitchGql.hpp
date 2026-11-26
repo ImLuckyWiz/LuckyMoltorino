@@ -380,6 +380,65 @@ struct GqlChannelPointRedeemResult {
 };
 #endif
 
+struct GqlChannelPointsContext {
+    qint64 balance = -1;
+    QString availableClaimId;
+};
+
+struct GqlChannelPointBonusClaimResult {
+    qint64 newBalance = -1;
+    qint64 pointsEarned = 0;
+};
+
+struct GqlPlaybackAccessToken {
+    QString value;
+    QString signature;
+};
+
+struct GqlDropBenefit {
+    QString id;
+    QString name;
+    QString imageAssetUrl;
+    QString distributionType;
+};
+
+struct GqlTimeBasedDrop {
+    QString id;
+    QString name;
+    int requiredMinutesWatched = 0;
+    int currentMinutesWatched = 0;
+    int requiredSubs = 0;
+    bool isClaimed = false;
+    QString dropInstanceId;
+    QStringList preconditionDropIds;
+    QVector<GqlDropBenefit> benefits;
+};
+
+struct GqlDropCampaign {
+    QString id;
+    QString name;
+    QString ownerName;
+    QString gameId;
+    QString gameName;
+    QString gameBoxArtUrl;
+    QString status;
+    QDateTime startAt;
+    QDateTime endAt;
+    QString description;
+    QString detailsUrl;
+    QString accountLinkUrl;
+    bool isAccountConnected = false;
+    bool allowIsEnabled = true;
+    QStringList allowedChannelIds;
+    QStringList allowedChannelLogins;
+    QVector<GqlTimeBasedDrop> drops;
+};
+
+enum class GqlDropClaimOutcome {
+    Claimed,
+    AlreadyClaimed,
+};
+
 class TwitchGql
 {
 public:
@@ -672,6 +731,35 @@ public:
                                  const QString &oauthToken,
                                  std::function<void(qint64)> successCallback,
                                  std::function<void(const QString &)> failureCallback);
+    static void getChannelPointsContext(
+        const QString &channelLogin, const QString &oauthToken,
+        std::function<void(GqlChannelPointsContext)> successCallback,
+        std::function<void(const QString &)> failureCallback);
+    static void claimChannelPoints(
+        const QString &channelId, const QString &claimId,
+        const QString &oauthToken,
+        std::function<void(GqlChannelPointBonusClaimResult)> successCallback,
+        std::function<void(const QString &)> failureCallback);
+    static void sendSpadeEvents(
+        const QString &gzipBase64Data, const QString &oauthToken,
+        std::function<void(bool)> successCallback,
+        std::function<void(const QString &)> failureCallback);
+    static void getPlaybackAccessToken(
+        const QString &channelLogin, const QString &oauthToken,
+        std::function<void(GqlPlaybackAccessToken)> successCallback,
+        std::function<void(const QString &)> failureCallback);
+    static void getDropCampaigns(
+        const QString &oauthToken,
+        std::function<void(QVector<GqlDropCampaign>)> successCallback,
+        std::function<void(const QString &)> failureCallback);
+    static void getDropInventory(
+        const QString &oauthToken,
+        std::function<void(QVector<GqlDropCampaign>)> successCallback,
+        std::function<void(const QString &)> failureCallback);
+    static void claimDropReward(
+        const QString &dropInstanceId, const QString &oauthToken,
+        std::function<void(GqlDropClaimOutcome)> successCallback,
+        std::function<void(const QString &)> failureCallback);
 #if MOLTORINO_ENABLE_CHANNEL_POINT_REWARDS
     static void getRewardRequestOverview(
         const QString &channelLogin, const QString &expectedChannelId,

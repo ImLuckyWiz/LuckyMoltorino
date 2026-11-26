@@ -8,6 +8,7 @@
 #include "common/LinkParser.hpp"
 #include "common/QLogging.hpp"
 #include "common/Version.hpp"
+#include "providers/twitch/WatchHeartbeatService.hpp"
 #include "singletons/Settings.hpp"
 #include "singletons/WindowManager.hpp"
 #include "widgets/dialogs/QualityPopup.hpp"
@@ -171,11 +172,27 @@ void openStreamlink(const QString &channelURL, const QString &quality,
     arguments << QProcess::splitCommand(additionalOptions);
 
     proc->setArguments(arguments);
-    bool res = proc->startDetached();
+    qint64 pid = 0;
+    bool res = proc->startDetached(&pid);
 
     if (!res)
     {
         showStreamlinkNotFoundError();
+        return;
+    }
+
+    if (pid > 0 && getSettings()->trackStreamlinkWatchTime &&
+        getSettings()->enableWatchHeartbeat)
+    {
+        if (const auto login =
+                watchheartbeat::detail::extractTwitchLoginFromUrl(channelURL))
+        {
+            if (auto *app = tryGetApp(); app && app->getWatchHeartbeat())
+            {
+                app->getWatchHeartbeat()->trackExternalProcess(
+                    pid, *login, QStringLiteral("streamlink:%1").arg(pid));
+            }
+        }
     }
 }
 

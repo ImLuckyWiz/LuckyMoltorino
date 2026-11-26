@@ -84,6 +84,9 @@ class IController;
 class SpellChecker;
 
 class KickChatServer;
+class WatchHeartbeatService;
+class DropPlaybackService;
+class DropsService;
 
 class IApplication
 {
@@ -160,6 +163,9 @@ public:
     virtual eventsub::IController *getEventSub() = 0;
     virtual SpellChecker *getSpellChecker() = 0;
     virtual KickChatServer *getKickChatServer() = 0;
+    virtual WatchHeartbeatService *getWatchHeartbeat() = 0;
+    virtual DropPlaybackService *getDropPlayback() = 0;
+    virtual DropsService *getDrops() = 0;
 };
 
 class Application : public IApplication
@@ -250,6 +256,9 @@ private:
     std::unique_ptr<KickChatServer> kickChatServer;
     std::unique_ptr<YouTubeChatServer> youtubeChatServer;
     std::unique_ptr<TikTokChatServer> tiktokChatServer;
+    std::unique_ptr<WatchHeartbeatService> watchHeartbeat;
+    std::unique_ptr<DropPlaybackService> dropPlayback;
+    std::unique_ptr<DropsService> dropsService;
     std::unique_ptr<MoltorinoDailyMessage> dailyMessage;
 #ifdef CHATTERINO_HAVE_PLUGINS
     std::unique_ptr<PluginController> plugins;
@@ -325,6 +334,9 @@ public:
     ITwitchUsers *getTwitchUsers() override;
     SpellChecker *getSpellChecker() override;
     KickChatServer *getKickChatServer() override;
+    WatchHeartbeatService *getWatchHeartbeat() override;
+    DropPlaybackService *getDropPlayback() override;
+    DropsService *getDrops() override;
 
 private:
     void initNm(const Modes &modes, const Paths &paths);

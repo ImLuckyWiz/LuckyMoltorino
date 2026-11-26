@@ -27,6 +27,7 @@ QString authenticatedTopicUserID(const QString &topic)
         QStringLiteral("predictions-user-v1."),
         QStringLiteral("community-points-user-v1."),
         QStringLiteral("chatrooms-user-v1."),
+        QStringLiteral("user-drop-events."),
     };
 
     for (const auto &prefix : prefixes)
@@ -202,6 +203,17 @@ void PubSub::listenToUserChannelPoints(const QString &userID,
     this->listenToAuthenticatedTopic(std::move(topic), authToken);
 }
 
+void PubSub::listenToUserDrops(const QString &userID, const QString &authToken)
+{
+    static const QString topicFormat("user-drop-events.%1");
+    assert(!userID.isEmpty());
+
+    auto topic = topicFormat.arg(userID);
+
+    qCDebug(chatterinoPubSub) << "Listen to topic" << topic;
+    this->listenToAuthenticatedTopic(std::move(topic), authToken);
+}
+
 void PubSub::listenToChatWarnings(const QString &userID,
                                   const QString &authToken)
 {
@@ -225,6 +237,7 @@ void PubSub::forgetUserAuthenticatedTopics(const QString &userID)
         QString("predictions-user-v1.%1").arg(userID),
         QString("community-points-user-v1.%1").arg(userID),
         QString("chatrooms-user-v1.%1").arg(userID),
+        QString("user-drop-events.%1").arg(userID),
     };
 
     for (const auto &topic : topics)
