@@ -2,11 +2,7 @@
 name: Check formatting
 
 on:
-  push:
-    branches:
-      - chatterino7
-  pull_request:
-  merge_group:
+  workflow_dispatch:
 
 concurrency:
   group: check-formatting-${{ github.ref }}
