@@ -988,6 +988,43 @@ std::unique_ptr<QMenu> SplitHeader::createMainMenu()
                                 channelLogin);
                         }
                     });
+
+                if (app->getWatchHeartbeat()->isWaitingForStream(channelLogin))
+                {
+                    menu->addAction(
+                        QStringLiteral("Cancel waiting for stream"),
+                        this->split_, [channelLogin] {
+                            if (auto *a = tryGetApp();
+                                a && a->getWatchHeartbeat())
+                            {
+                                a->getWatchHeartbeat()->cancelWaitingForStream(
+                                    channelLogin);
+                            }
+                        });
+                }
+                else
+                {
+                    menu->addAction(
+                        QStringLiteral("Wait for stream (idle mpv)"),
+                        this->split_, [channelLogin] {
+                            if (auto *a = tryGetApp();
+                                a && a->getWatchHeartbeat())
+                            {
+                                a->getWatchHeartbeat()->startWaitingForStream(
+                                    channelLogin, StreamWaitMode::IdleMpv);
+                            }
+                        });
+                    menu->addAction(
+                        QStringLiteral("Wait for stream (background)"),
+                        this->split_, [channelLogin] {
+                            if (auto *a = tryGetApp();
+                                a && a->getWatchHeartbeat())
+                            {
+                                a->getWatchHeartbeat()->startWaitingForStream(
+                                    channelLogin, StreamWaitMode::Background);
+                            }
+                        });
+                }
             }
             menu->addAction(QStringLiteral("Twitch Drops..."), this->split_,
                             [parent = this->split_] {

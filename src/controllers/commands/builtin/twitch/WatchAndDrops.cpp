@@ -154,4 +154,50 @@ QString claimChannelPointsBonus(const CommandContext &ctx)
     return {};
 }
 
+QString waitForStreamCommand(const CommandContext &ctx)
+{
+    auto *app = tryGetApp();
+    if (app == nullptr || app->getWatchHeartbeat() == nullptr)
+    {
+        return {};
+    }
+    if (ctx.twitchChannel == nullptr)
+    {
+        if (ctx.channel)
+        {
+            ctx.channel->addSystemMessage(QStringLiteral(
+                "The /watchwait command only works in Twitch channels."));
+        }
+        return {};
+    }
+
+    auto *hb = app->getWatchHeartbeat();
+    const auto login = ctx.twitchChannel->getName();
+    const auto arg = ctx.words.size() >= 2
+                         ? ctx.words.at(1).trimmed().toLower()
+                         : QStringLiteral("idle");
+
+    if (arg == QLatin1String("off") || arg == QLatin1String("cancel") ||
+        arg == QLatin1String("stop"))
+    {
+        hb->cancelWaitingForStream(login);
+    }
+    else if (arg == QLatin1String("bg") ||
+             arg == QLatin1String("background"))
+    {
+        hb->startWaitingForStream(login, StreamWaitMode::Background);
+    }
+    else if (arg == QLatin1String("idle") || arg == QLatin1String("mpv"))
+    {
+        hb->startWaitingForStream(login, StreamWaitMode::IdleMpv);
+    }
+    else
+    {
+        ctx.channel->addSystemMessage(
+            QStringLiteral("Usage: /watchwait [idle|bg|off]"));
+    }
+
+    return {};
+}
+
 }  // namespace chatterino::commands

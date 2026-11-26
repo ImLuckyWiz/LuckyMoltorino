@@ -890,6 +890,8 @@ public:
         StreamLinkPreferredQuality::Choose,
     };
     QStringSetting streamlinkOpts = {"/external/streamlink/options", ""};
+    BoolSetting streamlinkUseMpv = {"/external/streamlink/useMpv", true};
+    QStringSetting streamlinkMpvPath = {"/external/streamlink/mpvPath", ""};
 
     // Custom URI Scheme
     QStringSetting customURIScheme = {"/external/urischeme"};
@@ -1194,6 +1196,8 @@ public:
         "/moltorino/channelPoints/enableGigantifyEmotes", true};
     BoolSetting enableWatchHeartbeat{
         "/moltorino/watch/enableHeartbeat", true};
+    BoolSetting autoWatchActiveChannel{
+        "/moltorino/watch/autoWatchActiveChannel", true};
     BoolSetting trackStreamlinkWatchTime{
         "/moltorino/watch/trackStreamlink", true};
     BoolSetting enableDropsTracking{

@@ -22,6 +22,7 @@
 #include "providers/twitch/TwitchAccount.hpp"
 #include "providers/twitch/TwitchChannel.hpp"
 #include "providers/twitch/TwitchIrcServer.hpp"
+#include "providers/twitch/WatchHeartbeatService.hpp"
 #include "providers/youtube/YouTubeAccount.hpp"
 #include "providers/youtube/YouTubeChannel.hpp"
 #include "providers/youtube/YouTubeChatServer.hpp"
@@ -515,6 +516,18 @@ void Split::initializeInputConnections()
                                        [this] {
                                            // Forward textEdit's focused event
                                            this->focused.invoke();
+                                           if (auto tc = this->getTwitchFeatureChannel())
+                                           {
+                                               if (auto *app = tryGetApp();
+                                                   app && app->getWatchHeartbeat())
+                                               {
+                                                   app->getWatchHeartbeat()
+                                                       ->setAutoWatchChannel(
+                                                           tc->getName(),
+                                                           tc->accessStreamStatus()
+                                                               ->live);
+                                               }
+                                           }
                                        });
     this->signalHolder_.managedConnect(this->input_->ui_.textEdit->focusLost,
                                        [this] {
@@ -838,6 +851,28 @@ void Split::bindTwitchFeatureChannel(
 
     this->twitchFeatureSignalHolder_.managedConnect(
         channel->pinnedMessageChanged, updatePin);
+
+    auto syncWatchState = [this, weakChannel] {
+        const auto tc = weakChannel.lock();
+        if (!tc || tc != this->getTwitchFeatureChannel())
+        {
+            return;
+        }
+        if (auto *app = tryGetApp(); app && app->getWatchHeartbeat())
+        {
+            const bool isLive = tc->accessStreamStatus()->live;
+            app->getWatchHeartbeat()->notifyChannelLiveStatus(tc->getName(),
+                                                              isLive);
+            if (this->isVisible())
+            {
+                app->getWatchHeartbeat()->setAutoWatchChannel(tc->getName(),
+                                                              isLive);
+            }
+        }
+    };
+    this->twitchFeatureSignalHolder_.managedConnect(
+        channel->streamStatusChanged, syncWatchState);
+    syncWatchState();
 
     this->twitchFeatureSignalHolder_.managedConnect(
         channel->messageReplaced,

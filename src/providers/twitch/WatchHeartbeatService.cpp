@@ -13,6 +13,7 @@
 #include "providers/twitch/TwitchIrcServer.hpp"
 #include "singletons/Settings.hpp"
 #include "util/PostToThread.hpp"
+#include "util/StreamLink.hpp"
 
 #include <boost/beast/zlib/deflate_stream.hpp>
 #include <boost/crc.hpp>
@@ -26,6 +27,7 @@
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <vector>
 
 #ifdef Q_OS_WIN
 #    ifndef WIN32_LEAN_AND_MEAN
@@ -44,6 +46,7 @@ namespace {
 constexpr const char *SPADE_URL = "https://spade.twitch.tv/track";
 constexpr int HEARTBEAT_INTERVAL_MS = 60 * 1000;
 constexpr int PROCESS_WATCH_INTERVAL_MS = 5 * 1000;
+constexpr int WAIT_POLL_INTERVAL_MS = 30 * 1000;
 
 bool isProcessAlive(qint64 pid)
 {
@@ -90,6 +93,21 @@ bool isValidTwitchLogin(const QString &login)
         }
     }
     return true;
+}
+
+void postChannelSystemMessage(const QString &login, const QString &message)
+{
+    auto *app = tryGetApp();
+    if (app == nullptr || app->getTwitch() == nullptr)
+    {
+        return;
+    }
+
+    const auto chan = app->getTwitch()->getChannelOrEmpty(login);
+    if (chan && !chan->isEmpty())
+    {
+        chan->addSystemMessage(message);
+    }
 }
 
 }  // namespace
@@ -285,6 +303,11 @@ WatchHeartbeatService::WatchHeartbeatService(QObject *parent)
     this->processWatchTimer_.setSingleShot(false);
     QObject::connect(&this->processWatchTimer_, &QTimer::timeout, this,
                      &WatchHeartbeatService::onProcessWatchTick);
+
+    this->waitPollTimer_.setInterval(WAIT_POLL_INTERVAL_MS);
+    this->waitPollTimer_.setSingleShot(false);
+    QObject::connect(&this->waitPollTimer_, &QTimer::timeout, this,
+                     &WatchHeartbeatService::onWaitPollTick);
 }
 
 WatchHeartbeatService::~WatchHeartbeatService()
@@ -301,12 +324,25 @@ void WatchHeartbeatService::startWatching(const QString &channelLogin,
         return;
     }
 
+    if (sourceTag != QLatin1String("auto"))
+    {
+        this->manuallyStoppedLogin_.clear();
+    }
+
+    if (this->currentTarget_.has_value() &&
+        this->currentTarget_->login == normalizedLogin &&
+        this->currentTarget_->sourceTag == sourceTag &&
+        this->heartbeatTimer_.isActive())
+    {
+        return;
+    }
+
     ++this->generation_;
     if (this->trackedSourceTag_ != sourceTag)
     {
         this->trackedPid_ = 0;
         this->trackedSourceTag_.clear();
-        this->processWatchTimer_.stop();
+        this->syncProcessWatchTimer();
     }
 
     watchheartbeat::detail::WatchTarget target;
@@ -337,11 +373,16 @@ void WatchHeartbeatService::stopWatching(const QString &sourceTag)
 
     ++this->generation_;
     const auto prevLogin = this->currentTarget_->login;
+    if (sourceTag.isEmpty())
+    {
+        this->manuallyStoppedLogin_ = prevLogin;
+    }
+
     this->currentTarget_.reset();
     this->heartbeatTimer_.stop();
     this->trackedPid_ = 0;
     this->trackedSourceTag_.clear();
-    this->processWatchTimer_.stop();
+    this->syncProcessWatchTimer();
 
     qCDebug(chatterinoTwitch)
         << "[WatchHeartbeat] Stopped watching" << prevLogin;
@@ -366,6 +407,48 @@ void WatchHeartbeatService::toggleWatching(const QString &channelLogin)
     }
 }
 
+void WatchHeartbeatService::setAutoWatchChannel(const QString &channelLogin,
+                                                bool isLive)
+{
+    const auto normalizedLogin = channelLogin.trimmed().toLower();
+    if (normalizedLogin.isEmpty())
+    {
+        return;
+    }
+
+    if (!getSettings()->autoWatchActiveChannel ||
+        !getSettings()->enableWatchHeartbeat)
+    {
+        return;
+    }
+
+    if (this->currentTarget_.has_value() &&
+        this->currentTarget_->sourceTag != QLatin1String("auto"))
+    {
+        return;
+    }
+
+    if (isLive)
+    {
+        if (normalizedLogin == this->manuallyStoppedLogin_)
+        {
+            return;
+        }
+        if (this->currentTarget_.has_value() &&
+            this->currentTarget_->login == normalizedLogin)
+        {
+            return;
+        }
+        this->startWatching(normalizedLogin, QStringLiteral("auto"));
+    }
+    else if (this->currentTarget_.has_value() &&
+             this->currentTarget_->login == normalizedLogin &&
+             this->currentTarget_->sourceTag == QLatin1String("auto"))
+    {
+        this->stopWatching(QStringLiteral("auto"));
+    }
+}
+
 void WatchHeartbeatService::trackExternalProcess(qint64 pid,
                                                  const QString &channelLogin,
                                                  const QString &sourceTag)
@@ -378,7 +461,136 @@ void WatchHeartbeatService::trackExternalProcess(qint64 pid,
     this->trackedPid_ = pid;
     this->trackedSourceTag_ = sourceTag;
     this->startWatching(channelLogin, sourceTag);
-    this->processWatchTimer_.start();
+    this->syncProcessWatchTimer();
+}
+
+void WatchHeartbeatService::startWaitingForStream(const QString &channelLogin,
+                                                  StreamWaitMode mode)
+{
+    const auto login = channelLogin.trimmed().toLower();
+    if (login.isEmpty())
+    {
+        return;
+    }
+
+    // Check if the channel is already live locally
+    if (auto *app = tryGetApp(); app && app->getTwitch())
+    {
+        const auto chan = app->getTwitch()->getChannelOrEmpty(login);
+        if (auto *tc = dynamic_cast<TwitchChannel *>(chan.get()))
+        {
+            if (tc->accessStreamStatus()->live)
+            {
+                tc->addSystemMessage(QStringLiteral(
+                    "%1 is already live — opening in mpv...").arg(login));
+                openStreamlinkForChannel(login);
+                return;
+            }
+        }
+    }
+
+    this->waitingStreams_.erase(login);
+
+    StreamWaitEntry entry;
+    entry.login = login;
+    entry.mode = mode;
+
+    if (mode == StreamWaitMode::IdleMpv)
+    {
+        const auto session = launchIdleMpvForChannel(login);
+        if (!session.has_value())
+        {
+            postChannelSystemMessage(
+                login,
+                QStringLiteral("Could not launch mpv. Check External Tools -> "
+                               "Streamlink settings."));
+            this->waitStateChanged.invoke();
+            return;
+        }
+        entry.mpvPid = session->pid;
+        entry.ipcPipePath = session->ipcPipePath;
+        postChannelSystemMessage(
+            login, QStringLiteral(
+                       "Opened idle mpv window — waiting for %1 to go live.")
+                       .arg(login));
+    }
+    else
+    {
+        postChannelSystemMessage(
+            login, QStringLiteral(
+                       "Waiting in background for %1 to go live (will open "
+                       "mpv automatically).")
+                       .arg(login));
+    }
+
+    this->waitingStreams_.emplace(login, std::move(entry));
+    if (!this->waitPollTimer_.isActive())
+    {
+        this->waitPollTimer_.start();
+    }
+    this->syncProcessWatchTimer();
+    this->waitStateChanged.invoke();
+}
+
+void WatchHeartbeatService::cancelWaitingForStream(const QString &channelLogin)
+{
+    const auto login = channelLogin.trimmed().toLower();
+    if (login.isEmpty())
+    {
+        return;
+    }
+
+    const auto it = this->waitingStreams_.find(login);
+    if (it == this->waitingStreams_.end())
+    {
+        return;
+    }
+
+    this->waitingStreams_.erase(it);
+    if (this->waitingStreams_.empty())
+    {
+        this->waitPollTimer_.stop();
+    }
+    this->syncProcessWatchTimer();
+    postChannelSystemMessage(
+        login,
+        QStringLiteral("Cancelled waiting for %1 to go live.").arg(login));
+    this->waitStateChanged.invoke();
+}
+
+bool WatchHeartbeatService::isWaitingForStream(
+    const QString &channelLogin) const
+{
+    const auto login = channelLogin.trimmed().toLower();
+    return this->waitingStreams_.find(login) != this->waitingStreams_.end();
+}
+
+std::optional<StreamWaitMode> WatchHeartbeatService::waitModeForStream(
+    const QString &channelLogin) const
+{
+    const auto login = channelLogin.trimmed().toLower();
+    const auto it = this->waitingStreams_.find(login);
+    if (it == this->waitingStreams_.end())
+    {
+        return std::nullopt;
+    }
+    return it->second.mode;
+}
+
+void WatchHeartbeatService::notifyChannelLiveStatus(const QString &channelLogin,
+                                                    bool isLive)
+{
+    if (!isLive)
+    {
+        return;
+    }
+
+    const auto login = channelLogin.trimmed().toLower();
+    const auto it = this->waitingStreams_.find(login);
+    if (it != this->waitingStreams_.end() && !it->second.resolving)
+    {
+        this->triggerWaitLaunch(login);
+    }
 }
 
 std::optional<watchheartbeat::detail::WatchTarget>
@@ -402,8 +614,15 @@ void WatchHeartbeatService::stop()
     ++this->generation_;
     this->heartbeatTimer_.stop();
     this->processWatchTimer_.stop();
+    this->waitPollTimer_.stop();
     this->trackedPid_ = 0;
     this->trackedSourceTag_.clear();
+    this->manuallyStoppedLogin_.clear();
+    if (!this->waitingStreams_.empty())
+    {
+        this->waitingStreams_.clear();
+        this->waitStateChanged.invoke();
+    }
     if (this->currentTarget_.has_value())
     {
         this->currentTarget_.reset();
@@ -411,22 +630,253 @@ void WatchHeartbeatService::stop()
     }
 }
 
-void WatchHeartbeatService::onProcessWatchTick()
+void WatchHeartbeatService::syncProcessWatchTimer()
 {
-    if (this->trackedPid_ <= 0)
+    bool needTimer = this->trackedPid_ > 0;
+    if (!needTimer)
     {
-        this->processWatchTimer_.stop();
-        return;
+        for (const auto &[_, entry] : this->waitingStreams_)
+        {
+            if (entry.mode == StreamWaitMode::IdleMpv && entry.mpvPid > 0)
+            {
+                needTimer = true;
+                break;
+            }
+        }
     }
 
-    if (!isProcessAlive(this->trackedPid_))
+    if (needTimer)
+    {
+        if (!this->processWatchTimer_.isActive())
+        {
+            this->processWatchTimer_.start();
+        }
+    }
+    else
+    {
+        this->processWatchTimer_.stop();
+    }
+}
+
+void WatchHeartbeatService::onProcessWatchTick()
+{
+    if (this->trackedPid_ > 0 && !isProcessAlive(this->trackedPid_))
     {
         const auto tag = this->trackedSourceTag_;
         this->trackedPid_ = 0;
         this->trackedSourceTag_.clear();
-        this->processWatchTimer_.stop();
         this->stopWatching(tag);
     }
+
+    bool removedWait = false;
+    for (auto it = this->waitingStreams_.begin();
+         it != this->waitingStreams_.end();)
+    {
+        if (it->second.mode == StreamWaitMode::IdleMpv &&
+            it->second.mpvPid > 0 && !isProcessAlive(it->second.mpvPid))
+        {
+            qCDebug(chatterinoTwitch)
+                << "[WatchHeartbeat] Idle mpv closed for" << it->first;
+            it = this->waitingStreams_.erase(it);
+            removedWait = true;
+        }
+        else
+        {
+            ++it;
+        }
+    }
+
+    if (this->waitingStreams_.empty())
+    {
+        this->waitPollTimer_.stop();
+    }
+    if (removedWait)
+    {
+        this->waitStateChanged.invoke();
+    }
+
+    this->syncProcessWatchTimer();
+}
+
+void WatchHeartbeatService::onWaitPollTick()
+{
+    if (this->waitingStreams_.empty())
+    {
+        this->waitPollTimer_.stop();
+        return;
+    }
+
+    auto *helix = getHelix();
+    if (helix == nullptr)
+    {
+        return;
+    }
+
+    QStringList logins;
+    for (const auto &[login, entry] : this->waitingStreams_)
+    {
+        if (!entry.resolving)
+        {
+            logins.append(login);
+        }
+    }
+    if (logins.isEmpty())
+    {
+        return;
+    }
+
+    const auto generation = this->generation_;
+    helix->fetchStreams(
+        {}, logins,
+        [this, generation](const std::vector<HelixStream> &streams) {
+            runInGuiThread([this, generation, streams]() {
+                if (this->generation_ != generation)
+                {
+                    return;
+                }
+                for (const auto &stream : streams)
+                {
+                    if (stream.type == QLatin1String("live"))
+                    {
+                        this->notifyChannelLiveStatus(stream.userLogin, true);
+                    }
+                }
+            });
+        },
+        []() {}, []() {});
+}
+
+void WatchHeartbeatService::triggerWaitLaunch(const QString &channelLogin)
+{
+    const auto login = channelLogin.trimmed().toLower();
+    auto it = this->waitingStreams_.find(login);
+    if (it == this->waitingStreams_.end() || it->second.resolving)
+    {
+        return;
+    }
+
+    if (it->second.mode == StreamWaitMode::Background)
+    {
+        this->waitingStreams_.erase(it);
+        if (this->waitingStreams_.empty())
+        {
+            this->waitPollTimer_.stop();
+        }
+        this->syncProcessWatchTimer();
+        this->waitStateChanged.invoke();
+
+        postChannelSystemMessage(
+            login,
+            QStringLiteral("%1 went live — opening in mpv...").arg(login));
+        openStreamlinkForChannel(login);
+        return;
+    }
+
+    if (it->second.mpvPid > 0 && !isProcessAlive(it->second.mpvPid))
+    {
+        this->waitingStreams_.erase(it);
+        if (this->waitingStreams_.empty())
+        {
+            this->waitPollTimer_.stop();
+        }
+        this->syncProcessWatchTimer();
+        this->waitStateChanged.invoke();
+        return;
+    }
+
+    it->second.resolving = true;
+    const auto generation = this->generation_;
+    const auto mpvPid = it->second.mpvPid;
+    const auto ipcPipePath = it->second.ipcPipePath;
+
+    resolveStreamlinkStreamUrl(
+        login,
+        [this, generation, login, mpvPid, ipcPipePath](QString streamUrl) {
+            runInGuiThread([this, generation, login, mpvPid, ipcPipePath,
+                            streamUrl]() {
+                if (this->generation_ != generation)
+                {
+                    return;
+                }
+
+                auto entryIt = this->waitingStreams_.find(login);
+                if (entryIt == this->waitingStreams_.end())
+                {
+                    return;
+                }
+
+                if (mpvPid > 0 && !isProcessAlive(mpvPid))
+                {
+                    this->waitingStreams_.erase(entryIt);
+                    if (this->waitingStreams_.empty())
+                    {
+                        this->waitPollTimer_.stop();
+                    }
+                    this->syncProcessWatchTimer();
+                    this->waitStateChanged.invoke();
+                    return;
+                }
+
+                this->waitingStreams_.erase(entryIt);
+                if (this->waitingStreams_.empty())
+                {
+                    this->waitPollTimer_.stop();
+                }
+
+                const bool loaded =
+                    sendMpvIpcCommand(
+                        ipcPipePath,
+                        QJsonArray{QStringLiteral("loadfile"), streamUrl,
+                                   QStringLiteral("replace")}) &&
+                    sendMpvIpcCommand(
+                        ipcPipePath,
+                        QJsonArray{QStringLiteral("set_property"),
+                                   QStringLiteral("force-media-title"),
+                                   QStringLiteral("%1 - Twitch").arg(login)});
+
+                if (loaded)
+                {
+                    postChannelSystemMessage(
+                        login, QStringLiteral(
+                                   "%1 went live — loaded stream into mpv.")
+                                   .arg(login));
+                    if (getSettings()->trackStreamlinkWatchTime &&
+                        getSettings()->enableWatchHeartbeat)
+                    {
+                        this->trackExternalProcess(
+                            mpvPid, login,
+                            QStringLiteral("mpv:%1").arg(mpvPid));
+                    }
+                }
+                else
+                {
+                    postChannelSystemMessage(
+                        login,
+                        QStringLiteral("%1 went live — launching Streamlink.")
+                            .arg(login));
+                    openStreamlinkForChannel(login);
+                }
+
+                this->syncProcessWatchTimer();
+                this->waitStateChanged.invoke();
+            });
+        },
+        [this, generation, login](QString err) {
+            runInGuiThread([this, generation, login, err]() {
+                if (this->generation_ != generation)
+                {
+                    return;
+                }
+                if (auto entryIt = this->waitingStreams_.find(login);
+                    entryIt != this->waitingStreams_.end())
+                {
+                    entryIt->second.resolving = false;
+                }
+                qCDebug(chatterinoTwitch)
+                    << "[WatchHeartbeat] Wait stream-url failed for" << login
+                    << ":" << err;
+            });
+        });
 }
 
 void WatchHeartbeatService::populateTargetFromLocalChannel(

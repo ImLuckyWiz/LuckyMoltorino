@@ -13,6 +13,7 @@
 #include <QVector>
 
 #include <pajlada/signals/scoped-connection.hpp>
+#include <pajlada/signals/signalholder.hpp>
 
 #include <cstdint>
 #include <memory>
@@ -58,6 +59,7 @@ private:
     };
 
     void refreshHeader();
+    void refreshControlsBar();
     void refreshStyle();
     void reloadRewards();
     void refreshAccount();
@@ -104,6 +106,13 @@ private:
     QLabel *headerSubtitleLabel_{};
     Button *pinButton_{};
     SvgButton *closeButton_{};
+    QWidget *controlsBarWidget_{};
+    QPushButton *watchToggleButton_{};
+    QPushButton *autoRedeemButton_{};
+    QPushButton *dropsButton_{};
+    QPushButton *claimBonusButton_{};
+    QPushButton *watchStreamButton_{};
+    QPushButton *waitBgButton_{};
     QScrollArea *scrollArea_{};
     QWidget *contentWidget_{};
     QVBoxLayout *contentLayout_{};
@@ -148,6 +157,7 @@ private:
     QTimer layoutRefreshTimer_;
 
     pajlada::Signals::ScopedConnection channelPointsConnection_;
+    pajlada::Signals::SignalHolder managedSignalHolder_;
     std::vector<pajlada::Signals::ScopedConnection> managedSettingConnections_;
 
     static std::vector<QPointer<ChannelPointsDialog>> activeDialogs_;

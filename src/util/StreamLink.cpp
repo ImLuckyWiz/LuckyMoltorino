@@ -16,13 +16,26 @@
 #include "widgets/splits/Split.hpp"
 #include "widgets/Window.hpp"
 
+#include <QDir>
 #include <QErrorMessage>
 #include <QFileInfo>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QLocalSocket>
 #include <QProcess>
+#include <QRandomGenerator>
+#include <QStandardPaths>
 #include <QStringBuilder>
 
 #include <functional>
 #include <memory>
+
+#ifdef Q_OS_WIN
+#    ifndef WIN32_LEAN_AND_MEAN
+#        define WIN32_LEAN_AND_MEAN
+#    endif
+#    include <windows.h>
+#endif
 
 namespace {
 
@@ -98,9 +111,243 @@ QProcess *createStreamlinkProcess()
     return p;
 }
 
+QString preferredStreamlinkQualityString(QStringList &args)
+{
+    const auto preferredQuality = getSettings()->preferredQuality.getEnum();
+    QString quality;
+    QString exclude;
+
+    if (preferredQuality == StreamLinkPreferredQuality::High)
+    {
+        exclude = ">720p30";
+        quality = "high,best";
+    }
+    else if (preferredQuality == StreamLinkPreferredQuality::Medium)
+    {
+        exclude = ">540p30";
+        quality = "medium,best";
+    }
+    else if (preferredQuality == StreamLinkPreferredQuality::Low)
+    {
+        exclude = ">360p30";
+        quality = "low,best";
+    }
+    else if (preferredQuality == StreamLinkPreferredQuality::AudioOnly)
+    {
+        quality = "audio,audio_only";
+    }
+    else
+    {
+        quality = "best";
+    }
+
+    if (!exclude.isEmpty())
+    {
+        args << "--stream-sorting-excludes" << exclude;
+    }
+
+    return quality;
+}
+
 }
 
 namespace chatterino {
+
+QString resolveMpvExecutable()
+{
+    const auto custom = getSettings()->streamlinkMpvPath.getValue().trimmed();
+    if (!custom.isEmpty())
+    {
+        return custom;
+    }
+
+    if (const auto fromPath =
+            QStandardPaths::findExecutable(QStringLiteral("mpv"));
+        !fromPath.isEmpty())
+    {
+        return fromPath;
+    }
+
+#ifdef Q_OS_WIN
+    if (const auto fromPathExe =
+            QStandardPaths::findExecutable(QStringLiteral("mpv.exe"));
+        !fromPathExe.isEmpty())
+    {
+        return fromPathExe;
+    }
+
+    static const QStringList candidates{
+        QStringLiteral("C:/Program Files/MPV Player/mpv.exe"),
+        QStringLiteral("C:/Program Files/MPV Player/mpv.com"),
+        QStringLiteral("C:/Program Files (x86)/MPV Player/mpv.exe"),
+        QStringLiteral("C:/Program Files/mpv/mpv.exe"),
+    };
+    for (const auto &candidate : candidates)
+    {
+        if (QFileInfo::exists(candidate))
+        {
+            return candidate;
+        }
+    }
+#endif
+
+    return {};
+}
+
+QStringList buildStreamlinkPlayerArgs(const QStringList &existingArgs,
+                                      bool useMpv, const QString &mpvExecutable)
+{
+    const auto trimmedMpv = mpvExecutable.trimmed();
+    if (!useMpv || trimmedMpv.isEmpty())
+    {
+        return {};
+    }
+
+    for (const auto &arg : existingArgs)
+    {
+        if (arg == QLatin1String("--player") || arg == QLatin1String("-p") ||
+            arg.startsWith(QLatin1String("--player=")))
+        {
+            return {};
+        }
+    }
+
+    return {QStringLiteral("--player"), trimmedMpv};
+}
+
+std::optional<IdleMpvSession> launchIdleMpvForChannel(
+    const QString &channelLogin)
+{
+    const auto mpv = resolveMpvExecutable();
+    if (mpv.isEmpty())
+    {
+        return std::nullopt;
+    }
+
+    const auto login = channelLogin.trimmed().toLower();
+    const auto nonce = QRandomGenerator::global()->generate();
+#ifdef Q_OS_WIN
+    const QString ipcPath =
+        QStringLiteral(R"(\\.\pipe\luckymoltorino-mpv-%1-%2)")
+            .arg(login)
+            .arg(nonce);
+#else
+    const QString ipcPath =
+        QDir::tempPath() +
+        QStringLiteral("/luckymoltorino-mpv-%1-%2.sock").arg(login).arg(nonce);
+#endif
+
+    const QStringList args{
+        QStringLiteral("--idle=yes"),
+        QStringLiteral("--force-window=yes"),
+        QStringLiteral("--keep-open=yes"),
+        QStringLiteral("--title=Waiting for %1...").arg(login),
+        QStringLiteral("--input-ipc-server=%1").arg(ipcPath),
+    };
+
+    qint64 pid = 0;
+    if (!QProcess::startDetached(mpv, args, QString(), &pid) || pid <= 0)
+    {
+        return std::nullopt;
+    }
+
+    return IdleMpvSession{.pid = pid, .ipcPipePath = ipcPath};
+}
+
+bool sendMpvIpcCommand(const QString &ipcPipePath, const QJsonArray &command)
+{
+    if (ipcPipePath.isEmpty())
+    {
+        return false;
+    }
+
+    QJsonObject obj;
+    obj.insert(QStringLiteral("command"), command);
+    QByteArray line = QJsonDocument(obj).toJson(QJsonDocument::Compact);
+    line.append('\n');
+
+#ifdef Q_OS_WIN
+    HANDLE pipe = CreateFileW(reinterpret_cast<LPCWSTR>(ipcPipePath.utf16()),
+                              GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0,
+                              nullptr);
+    if (pipe == INVALID_HANDLE_VALUE)
+    {
+        return false;
+    }
+
+    DWORD written = 0;
+    const BOOL ok = WriteFile(pipe, line.constData(), DWORD(line.size()),
+                              &written, nullptr);
+    CloseHandle(pipe);
+    return ok != FALSE && written == DWORD(line.size());
+#else
+    QLocalSocket socket;
+    socket.connectToServer(ipcPipePath);
+    if (!socket.waitForConnected(1500))
+    {
+        return false;
+    }
+    socket.write(line);
+    const bool flushed = socket.waitForBytesWritten(1500);
+    socket.disconnectFromServer();
+    return flushed;
+#endif
+}
+
+void resolveStreamlinkStreamUrl(const QString &channelLogin,
+                                std::function<void(QString)> onSuccess,
+                                std::function<void(QString)> onError)
+{
+    auto *p = createStreamlinkProcess();
+    const auto login = channelLogin.trimmed().toLower();
+    QStringList args = p->arguments();
+    args << QStringLiteral("--stream-url");
+
+    QStringList extraArgs;
+    const QString quality = preferredStreamlinkQualityString(extraArgs);
+    args << extraArgs;
+
+    const QString additionalOptions =
+        getSettings()->streamlinkOpts.getValue();
+    args << QProcess::splitCommand(additionalOptions);
+    args << QStringLiteral("twitch.tv/%1").arg(login) << quality;
+    args.removeAll(QString());
+
+    QObject::connect(
+        p,
+        static_cast<void (QProcess::*)(int, QProcess::ExitStatus)>(
+            &QProcess::finished),
+        [p, onSuccess = std::move(onSuccess),
+         onError = std::move(onError)](int exitCode, QProcess::ExitStatus) {
+            const auto stdoutText =
+                QString::fromUtf8(p->readAllStandardOutput());
+            const auto stderrText =
+                QString::fromUtf8(p->readAllStandardError()).trimmed();
+
+            if (exitCode == 0)
+            {
+                const auto lines = stdoutText.split('\n', Qt::SkipEmptyParts);
+                for (auto it = lines.crbegin(); it != lines.crend(); ++it)
+                {
+                    const auto candidate = it->trimmed();
+                    if (candidate.startsWith(QLatin1String("http://")) ||
+                        candidate.startsWith(QLatin1String("https://")))
+                    {
+                        onSuccess(candidate);
+                        return;
+                    }
+                }
+            }
+
+            onError(stderrText.isEmpty()
+                        ? QStringLiteral("Streamlink exited with code %1")
+                              .arg(exitCode)
+                        : stderrText);
+        });
+
+    p->setArguments(args);
+    p->start();
+}
 
 void getStreamQualities(const QString &channelURL,
                         std::function<void(QStringList)> cb)
@@ -163,13 +410,18 @@ void openStreamlink(const QString &channelURL, const QString &quality,
                     QStringList extraArguments)
 {
     const auto proc = std::unique_ptr<QProcess>(createStreamlinkProcess());
-    auto arguments = proc->arguments()
-                     << std::move(extraArguments) << channelURL << quality;
+    auto arguments = proc->arguments() << std::move(extraArguments);
+
+    const QString additionalOptions = getSettings()->streamlinkOpts.getValue();
+    const auto extraUserArgs = QProcess::splitCommand(additionalOptions);
+
+    QStringList allExisting = arguments;
+    allExisting << extraUserArgs;
+    arguments << buildStreamlinkPlayerArgs(
+        allExisting, getSettings()->streamlinkUseMpv, resolveMpvExecutable());
+    arguments << extraUserArgs << channelURL << quality;
 
     arguments.removeAll(QString());
-
-    QString additionalOptions = getSettings()->streamlinkOpts.getValue();
-    arguments << QProcess::splitCommand(additionalOptions);
 
     proc->setArguments(arguments);
     qint64 pid = 0;
@@ -233,38 +485,7 @@ void openStreamlinkForChannel(const QString &channel, QStringView prefixURL)
     }
 
     QStringList args;
-
-    QString quality;
-
-    QString exclude;
-
-    if (preferredQuality == StreamLinkPreferredQuality::High)
-    {
-        exclude = ">720p30";
-        quality = "high,best";
-    }
-    else if (preferredQuality == StreamLinkPreferredQuality::Medium)
-    {
-        exclude = ">540p30";
-        quality = "medium,best";
-    }
-    else if (preferredQuality == StreamLinkPreferredQuality::Low)
-    {
-        exclude = ">360p30";
-        quality = "low,best";
-    }
-    else if (preferredQuality == StreamLinkPreferredQuality::AudioOnly)
-    {
-        quality = "audio,audio_only";
-    }
-    else
-    {
-        quality = "best";
-    }
-    if (!exclude.isEmpty())
-    {
-        args << "--stream-sorting-excludes" << exclude;
-    }
+    const QString quality = preferredStreamlinkQualityString(args);
 
     openStreamlink(channelURL, quality, args);
 }

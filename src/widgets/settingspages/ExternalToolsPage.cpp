@@ -211,6 +211,18 @@ void ExternalToolsPage::initLayout(GeneralPageView &layout)
 
         SettingWidget::lineEdit("Additional options", s.streamlinkOpts, "")
             ->addTo(layout, form);
+
+        SettingWidget::checkbox("Use mpv as Streamlink player",
+                                s.streamlinkUseMpv)
+            ->setTooltip("Pass --player mpv to Streamlink instead of relying "
+                         "on Streamlink's default player (VLC).")
+            ->addTo(layout);
+
+        SettingWidget::lineEdit("Custom mpv path (optional)",
+                                s.streamlinkMpvPath,
+                                "Leave blank to auto-detect mpv")
+            ->conditionallyEnabledBy(s.streamlinkUseMpv)
+            ->addTo(layout, form);
     }
 
     {

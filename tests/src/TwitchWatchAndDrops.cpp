@@ -2,6 +2,7 @@
 #include "providers/twitch/DropsService.hpp"
 #include "providers/twitch/TwitchChannel.hpp"
 #include "providers/twitch/WatchHeartbeatService.hpp"
+#include "util/StreamLink.hpp"
 
 #include "common/Args.hpp"
 #include "common/Modes.hpp"
@@ -361,6 +362,65 @@ TEST(TwitchChannelPoints, ClaimAvailablePubSub)
     channel.handleUserPointsUpdate(earnedPayload);
     EXPECT_FALSE(channel.hasAvailableBonusClaim());
     EXPECT_EQ(channel.channelPointBalance(), 150);
+}
+
+TEST(StreamLink, BuildPlayerArgs)
+{
+    const QString mpv = QStringLiteral("C:/Program Files/MPV Player/mpv.exe");
+
+    EXPECT_EQ(buildStreamlinkPlayerArgs({}, true, mpv),
+              (QStringList{QStringLiteral("--player"), mpv}));
+    EXPECT_TRUE(buildStreamlinkPlayerArgs({}, false, mpv).isEmpty());
+    EXPECT_TRUE(buildStreamlinkPlayerArgs({}, true, QString()).isEmpty());
+    EXPECT_TRUE(
+        buildStreamlinkPlayerArgs({QStringLiteral("--player"),
+                                   QStringLiteral("vlc")},
+                                  true, mpv)
+            .isEmpty());
+    EXPECT_TRUE(
+        buildStreamlinkPlayerArgs({QStringLiteral("--player=vlc")}, true, mpv)
+            .isEmpty());
+    EXPECT_TRUE(
+        buildStreamlinkPlayerArgs({QStringLiteral("-p"),
+                                   QStringLiteral("vlc")},
+                                  true, mpv)
+            .isEmpty());
+}
+
+TEST(WatchHeartbeat, AutoWatchPriority)
+{
+    getSettings()->enableWatchHeartbeat = true;
+    getSettings()->autoWatchActiveChannel = true;
+
+    WatchHeartbeatService hb;
+
+    // Auto-watch starts on live channel
+    hb.setAutoWatchChannel(QStringLiteral("StreamerA"), true);
+    ASSERT_TRUE(hb.currentTarget().has_value());
+    EXPECT_EQ(hb.currentTarget()->login, QStringLiteral("streamera"));
+    EXPECT_EQ(hb.currentTarget()->sourceTag, QStringLiteral("auto"));
+
+    // Auto-watch stops when channel goes offline
+    hb.setAutoWatchChannel(QStringLiteral("StreamerA"), false);
+    EXPECT_FALSE(hb.currentTarget().has_value());
+
+    // Manual watch is not overridden by auto-watch
+    hb.startWatching(QStringLiteral("ManualStream"), QStringLiteral("manual"));
+    hb.setAutoWatchChannel(QStringLiteral("StreamerB"), true);
+    ASSERT_TRUE(hb.currentTarget().has_value());
+    EXPECT_EQ(hb.currentTarget()->login, QStringLiteral("manualstream"));
+    EXPECT_EQ(hb.currentTarget()->sourceTag, QStringLiteral("manual"));
+
+    // Manual stop suppresses auto-watch from immediately re-enabling the same channel
+    hb.stopWatching();
+    EXPECT_FALSE(hb.currentTarget().has_value());
+    hb.setAutoWatchChannel(QStringLiteral("ManualStream"), true);
+    EXPECT_FALSE(hb.currentTarget().has_value());
+
+    // Switching to another live channel re-enables auto-watch
+    hb.setAutoWatchChannel(QStringLiteral("StreamerB"), true);
+    ASSERT_TRUE(hb.currentTarget().has_value());
+    EXPECT_EQ(hb.currentTarget()->login, QStringLiteral("streamerb"));
 }
 
 }  // namespace chatterino

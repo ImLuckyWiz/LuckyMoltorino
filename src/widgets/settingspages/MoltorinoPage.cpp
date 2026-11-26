@@ -1592,6 +1592,13 @@ MoltorinoPage::MoltorinoPage()
                      "(required to earn watch-time channel points and Drops).")
         ->addTo(*view);
 
+    SettingWidget::checkbox(
+        "Automatically watch active live Twitch channel for Points & Drops",
+        s.autoWatchActiveChannel)
+        ->setTooltip("Start Points & Drops watch-time tracking automatically "
+                     "when you open or focus a live Twitch channel.")
+        ->addTo(*view);
+
     SettingWidget::checkbox("Track Streamlink watch sessions automatically",
                             s.trackStreamlinkWatchTime)
         ->setTooltip("Automatically start watch-time tracking when opening a "

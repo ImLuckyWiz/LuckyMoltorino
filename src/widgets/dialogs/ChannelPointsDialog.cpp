@@ -7,12 +7,15 @@
 #include "messages/Image.hpp"
 #include "providers/moltorino/MoltorinoAuth.hpp"
 #include "providers/twitch/TwitchChannel.hpp"
+#include "providers/twitch/WatchHeartbeatService.hpp"
 #include "singletons/Fonts.hpp"
 #include "singletons/Settings.hpp"
 #include "singletons/Theme.hpp"
 #include "util/Helpers.hpp"
+#include "util/StreamLink.hpp"
 #include "widgets/buttons/Button.hpp"
 #include "widgets/buttons/SvgButton.hpp"
+#include "widgets/dialogs/DropsDialog.hpp"
 #include "widgets/helper/Line.hpp"
 #include "widgets/splits/SplitInput.hpp"
 
@@ -1013,6 +1016,126 @@ ChannelPointsDialog::ChannelPointsDialog(TwitchChannel *channel,
     separator->setFixedHeight(scaledSeparatorHeight(this->scale()));
     this->mainLayout_->addWidget(separator);
 
+    this->controlsBarWidget_ = new QWidget(container);
+    this->controlsBarWidget_->setObjectName("ChannelPointsControlsBar");
+    auto *controlsLayout = new QVBoxLayout(this->controlsBarWidget_);
+    controlsLayout->setContentsMargins(8, 5, 8, 5);
+    controlsLayout->setSpacing(4);
+
+    auto *controlsRow1 = new QHBoxLayout();
+    controlsRow1->setContentsMargins(0, 0, 0, 0);
+    controlsRow1->setSpacing(4);
+
+    this->watchToggleButton_ = new QPushButton(this->controlsBarWidget_);
+    this->watchToggleButton_->setObjectName("ChannelPointsControlButton");
+    this->watchToggleButton_->setCheckable(true);
+    this->watchToggleButton_->setCursor(Qt::PointingHandCursor);
+    QObject::connect(this->watchToggleButton_, &QPushButton::clicked, this,
+                     [this] {
+                         if (auto *app = tryGetApp();
+                             app && app->getWatchHeartbeat())
+                         {
+                             app->getWatchHeartbeat()->toggleWatching(
+                                 this->channel_->getName());
+                         }
+                         this->refreshControlsBar();
+                     });
+    controlsRow1->addWidget(this->watchToggleButton_, 1);
+
+    this->autoRedeemButton_ = new QPushButton(this->controlsBarWidget_);
+    this->autoRedeemButton_->setObjectName("ChannelPointsControlButton");
+    this->autoRedeemButton_->setCheckable(true);
+    this->autoRedeemButton_->setCursor(Qt::PointingHandCursor);
+    QObject::connect(this->autoRedeemButton_, &QPushButton::clicked, this,
+                     [this] {
+                         getSettings()->autoClaimChannelPoints =
+                             !getSettings()->autoClaimChannelPoints.getValue();
+                         if (getSettings()->autoClaimChannelPoints &&
+                             this->channel_->hasAvailableBonusClaim() &&
+                             !this->channel_->isBonusClaimInFlight())
+                         {
+                             this->channel_->claimAvailableBonusPoints(false);
+                         }
+                         this->refreshControlsBar();
+                     });
+    controlsRow1->addWidget(this->autoRedeemButton_, 1);
+
+    this->dropsButton_ =
+        new QPushButton(QStringLiteral("Drops"), this->controlsBarWidget_);
+    this->dropsButton_->setObjectName("ChannelPointsControlButton");
+    this->dropsButton_->setCursor(Qt::PointingHandCursor);
+    QObject::connect(this->dropsButton_, &QPushButton::clicked, this,
+                     [this] { DropsDialog::showDialog(this); });
+    controlsRow1->addWidget(this->dropsButton_);
+    controlsLayout->addLayout(controlsRow1);
+
+    auto *controlsRow2 = new QHBoxLayout();
+    controlsRow2->setContentsMargins(0, 0, 0, 0);
+    controlsRow2->setSpacing(4);
+
+    this->claimBonusButton_ = new QPushButton(QStringLiteral("Claim Bonus"),
+                                              this->controlsBarWidget_);
+    this->claimBonusButton_->setObjectName("ChannelPointsBonusButton");
+    this->claimBonusButton_->setCursor(Qt::PointingHandCursor);
+    QObject::connect(this->claimBonusButton_, &QPushButton::clicked, this,
+                     [this] {
+                         this->channel_->claimAvailableBonusPoints(false);
+                         this->refreshControlsBar();
+                     });
+    controlsRow2->addWidget(this->claimBonusButton_);
+
+    this->watchStreamButton_ = new QPushButton(this->controlsBarWidget_);
+    this->watchStreamButton_->setObjectName("ChannelPointsControlButton");
+    this->watchStreamButton_->setCursor(Qt::PointingHandCursor);
+    QObject::connect(this->watchStreamButton_, &QPushButton::clicked, this,
+                     [this] {
+                         const auto login = this->channel_->getName();
+                         auto *app = tryGetApp();
+                         auto *hb = app ? app->getWatchHeartbeat() : nullptr;
+                         if (hb != nullptr && hb->isWaitingForStream(login))
+                         {
+                             hb->cancelWaitingForStream(login);
+                         }
+                         else if (this->channel_->accessStreamStatus()->live)
+                         {
+                             openStreamlinkForChannel(login);
+                         }
+                         else if (hb != nullptr)
+                         {
+                             hb->startWaitingForStream(login,
+                                                       StreamWaitMode::IdleMpv);
+                         }
+                         this->refreshControlsBar();
+                     });
+    controlsRow2->addWidget(this->watchStreamButton_, 1);
+
+    this->waitBgButton_ = new QPushButton(QStringLiteral("Wait (BG)"),
+                                          this->controlsBarWidget_);
+    this->waitBgButton_->setObjectName("ChannelPointsControlButton");
+    this->waitBgButton_->setToolTip(QStringLiteral(
+        "Wait silently in background and open mpv once stream goes live"));
+    this->waitBgButton_->setCursor(Qt::PointingHandCursor);
+    QObject::connect(this->waitBgButton_, &QPushButton::clicked, this,
+                     [this] {
+                         if (auto *app = tryGetApp();
+                             app && app->getWatchHeartbeat())
+                         {
+                             app->getWatchHeartbeat()->startWaitingForStream(
+                                 this->channel_->getName(),
+                                 StreamWaitMode::Background);
+                         }
+                         this->refreshControlsBar();
+                     });
+    controlsRow2->addWidget(this->waitBgButton_);
+    controlsLayout->addLayout(controlsRow2);
+
+    this->mainLayout_->addWidget(this->controlsBarWidget_);
+
+    auto *controlsSep = new Line(false);
+    controlsSep->setObjectName("ChannelPointsControlsSeparator");
+    controlsSep->setFixedHeight(scaledSeparatorHeight(this->scale()));
+    this->mainLayout_->addWidget(controlsSep);
+
     this->scrollArea_ = new QScrollArea(container);
     this->scrollArea_->setObjectName("ChannelPointsScrollArea");
     this->scrollArea_->setFrameShape(QFrame::NoFrame);
@@ -1032,6 +1155,24 @@ ChannelPointsDialog::ChannelPointsDialog(TwitchChannel *channel,
         this->channel_->channelPointsChanged.connect([this] {
             this->refreshHeader();
         });
+    this->managedSignalHolder_.managedConnect(
+        this->channel_->streamStatusChanged, [this] {
+            this->refreshControlsBar();
+        });
+    if (auto *app = tryGetApp(); app && app->getWatchHeartbeat())
+    {
+        this->managedSignalHolder_.managedConnect(
+            app->getWatchHeartbeat()->targetChanged, [this] {
+                this->refreshControlsBar();
+            });
+        this->managedSignalHolder_.managedConnect(
+            app->getWatchHeartbeat()->waitStateChanged, [this] {
+                this->refreshControlsBar();
+            });
+    }
+    getSettings()->autoClaimChannelPoints.connect(
+        [this](bool, auto) { this->refreshControlsBar(); },
+        this->managedSettingConnections_, false);
     this->authToken_ = MoltorinoAuth::resolveCurrentUserToken().token;
     this->managedSettingConnections_.emplace_back(
         getApp()->getAccounts()->twitch.currentUserChanged.connect(
@@ -1179,6 +1320,83 @@ void ChannelPointsDialog::refreshHeader()
             QStringLiteral("Bal: %1").arg(fullPoints(balance)));
     }
     this->backButton_->setVisible(this->view_ != View::Rewards);
+    this->refreshControlsBar();
+}
+
+void ChannelPointsDialog::refreshControlsBar()
+{
+    if (this->controlsBarWidget_ == nullptr)
+    {
+        return;
+    }
+
+    const bool showControls = this->view_ == View::Rewards;
+    this->controlsBarWidget_->setVisible(showControls);
+    if (auto *sep =
+            this->findChild<QWidget *>("ChannelPointsControlsSeparator"))
+    {
+        sep->setVisible(showControls);
+    }
+    if (!showControls)
+    {
+        return;
+    }
+
+    const auto login = this->channel_->getName();
+    auto *app = tryGetApp();
+    auto *hb = app ? app->getWatchHeartbeat() : nullptr;
+
+    const bool watching = hb != nullptr && hb->isWatching(login);
+    this->watchToggleButton_->setChecked(watching);
+    this->watchToggleButton_->setText(
+        watching ? QStringLiteral("Watch: ON") : QStringLiteral("Watch: OFF"));
+    this->watchToggleButton_->setToolTip(QStringLiteral(
+        "Toggle Points & Drops watch-time tracking for %1").arg(login));
+
+    const bool autoRedeem = getSettings()->autoClaimChannelPoints.getValue();
+    this->autoRedeemButton_->setChecked(autoRedeem);
+    this->autoRedeemButton_->setText(
+        autoRedeem ? QStringLiteral("Auto-redeem: ON")
+                   : QStringLiteral("Auto-redeem: OFF"));
+    this->autoRedeemButton_->setToolTip(QStringLiteral(
+        "Automatically claim periodic channel point bonus chests"));
+
+    const bool hasChest = this->channel_->hasAvailableBonusClaim();
+    const bool claimingChest = this->channel_->isBonusClaimInFlight();
+    this->claimBonusButton_->setVisible(hasChest || claimingChest);
+    this->claimBonusButton_->setEnabled(!claimingChest);
+    this->claimBonusButton_->setText(claimingChest
+                                         ? QStringLiteral("Claiming...")
+                                         : QStringLiteral("Claim Bonus"));
+
+    const bool waiting = hb != nullptr && hb->isWaitingForStream(login);
+    const bool isLive = this->channel_->accessStreamStatus()->live;
+    if (waiting)
+    {
+        const auto waitMode = hb->waitModeForStream(login);
+        this->watchStreamButton_->setText(
+            waitMode == StreamWaitMode::IdleMpv
+                ? QStringLiteral("Cancel Wait (mpv)")
+                : QStringLiteral("Cancel Wait (BG)"));
+        this->watchStreamButton_->setToolTip(
+            QStringLiteral("Stop waiting for %1 to go live").arg(login));
+        this->waitBgButton_->hide();
+    }
+    else if (isLive)
+    {
+        this->watchStreamButton_->setText(QStringLiteral("Watch (mpv)"));
+        this->watchStreamButton_->setToolTip(
+            QStringLiteral("Open %1 in Streamlink (mpv)").arg(login));
+        this->waitBgButton_->hide();
+    }
+    else
+    {
+        this->watchStreamButton_->setText(QStringLiteral("Wait (mpv)"));
+        this->watchStreamButton_->setToolTip(QStringLiteral(
+            "Open idle mpv window now and load %1 automatically once live")
+                                                 .arg(login));
+        this->waitBgButton_->show();
+    }
 }
 
 void ChannelPointsDialog::refreshStyle()
@@ -1215,6 +1433,22 @@ void ChannelPointsDialog::refreshStyle()
             this->findChild<QWidget *>("ChannelPointsDialogSeparator"))
     {
         separator->setFixedHeight(scaledSeparatorHeight(rawScale));
+    }
+    if (auto *controlsSep =
+            this->findChild<QWidget *>("ChannelPointsControlsSeparator"))
+    {
+        controlsSep->setFixedHeight(scaledSeparatorHeight(rawScale));
+    }
+    const auto smallUiFont =
+        fonts->getFont(FontStyle::UiMedium, readableFontScale(rawScale * 0.92F));
+    for (auto *btn : {this->watchToggleButton_, this->autoRedeemButton_,
+                      this->dropsButton_, this->claimBonusButton_,
+                      this->watchStreamButton_, this->waitBgButton_})
+    {
+        if (btn != nullptr)
+        {
+            btn->setFont(smallUiFont);
+        }
     }
 
     if (this->statusLabel_ != nullptr)
@@ -1324,6 +1558,34 @@ void ChannelPointsDialog::refreshStyle()
         QPushButton#ChannelPointsModifierButton:checked {
             background: #3b2664;
             border-color: %11;
+        }
+        QPushButton#ChannelPointsControlButton {
+            background: %5;
+            color: %2;
+            border: 1px solid %3;
+            border-radius: %7px;
+            padding: 3px 6px;
+            text-align: center;
+        }
+        QPushButton#ChannelPointsControlButton:hover {
+            background: %10;
+            border-color: %11;
+        }
+        QPushButton#ChannelPointsControlButton:checked {
+            background: #3b2664;
+            border-color: #9147ff;
+            color: #ffffff;
+        }
+        QPushButton#ChannelPointsBonusButton {
+            background: #d97706;
+            color: #ffffff;
+            border: 1px solid #f59e0b;
+            border-radius: %7px;
+            padding: 3px 7px;
+            font-weight: 600;
+        }
+        QPushButton#ChannelPointsBonusButton:hover {
+            background: #f59e0b;
         }
     )")
                             .arg(bg, text, border, muted, buttonBg, fieldBg)

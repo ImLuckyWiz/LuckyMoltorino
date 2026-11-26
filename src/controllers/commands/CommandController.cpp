@@ -707,6 +707,7 @@ CommandController::CommandController(const Paths &paths)
     this->registerCommand("/claim", &commands::claimChannelPointsBonus);
     this->registerCommand("/drops", &commands::openDropsDialog);
     this->registerCommand("/watch", &commands::toggleWatchChannel);
+    this->registerCommand("/watchwait", &commands::waitForStreamCommand);
     this->registerCommand("/gif", &commands::openGifPicker);
     this->registerCommand("/gigantify", &commands::sendGigantifiedEmote);
     this->registerCommand("/cancelpoll", &commands::cancelPoll);
