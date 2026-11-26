@@ -102,4 +102,11 @@ private:
     std::uint64_t generation_ = 0;
 };
 
+namespace watchheartbeat {
+
+QString watchPointsLogFilePath();
+void appendWatchPointsLog(const QString &category, const QString &message);
+
+}  // namespace watchheartbeat
+
 }  // namespace chatterino

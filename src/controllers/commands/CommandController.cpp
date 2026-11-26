@@ -708,6 +708,7 @@ CommandController::CommandController(const Paths &paths)
     this->registerCommand("/drops", &commands::openDropsDialog);
     this->registerCommand("/watch", &commands::toggleWatchChannel);
     this->registerCommand("/watchwait", &commands::waitForStreamCommand);
+    this->registerCommand("/watchlog", &commands::openWatchPointsLogCommand);
     this->registerCommand("/gif", &commands::openGifPicker);
     this->registerCommand("/gigantify", &commands::sendGigantifiedEmote);
     this->registerCommand("/cancelpoll", &commands::cancelPoll);

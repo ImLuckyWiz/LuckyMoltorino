@@ -538,6 +538,12 @@ void DropsService::claimDrop(const QString &dropInstanceId,
                     const QString display = dropName.isEmpty()
                                                 ? QStringLiteral("Twitch Drop")
                                                 : dropName;
+                    watchheartbeat::appendWatchPointsLog(
+                        QStringLiteral("Drops"),
+                        QStringLiteral("Claimed %1 (%2)")
+                            .arg(display,
+                                 automatic ? QStringLiteral("auto")
+                                           : QStringLiteral("manual")));
                     auto *app = tryGetApp();
                     if (app != nullptr && app->getWatchHeartbeat() != nullptr &&
                         app->getTwitch() != nullptr)

@@ -43,6 +43,7 @@
 #include "providers/twitch/IrcMessageHandler.hpp"
 #include "providers/twitch/PubSubManager.hpp"
 #include "providers/twitch/TwitchAccount.hpp"
+#include "providers/twitch/WatchHeartbeatService.hpp"
 #include "providers/twitch/TwitchCommon.hpp"
 #include "providers/twitch/TwitchIrcServer.hpp"
 #include "providers/twitch/TwitchUsers.hpp"
@@ -6463,6 +6464,15 @@ void TwitchChannel::claimAvailableBonusPoints(bool automatic)
                 }
                 channel->channelPointsChanged.invoke();
 
+                watchheartbeat::appendWatchPointsLog(
+                    QStringLiteral("Points"),
+                    QStringLiteral("%1: Claimed +%2 bonus points (balance: %3, %4)")
+                        .arg(channel->getName())
+                        .arg(result.pointsEarned)
+                        .arg(result.newBalance)
+                        .arg(automatic ? QStringLiteral("auto")
+                                       : QStringLiteral("manual")));
+
                 if (!automatic ||
                     getSettings()->notifyChannelPointsBonusClaimed)
                 {
@@ -6487,6 +6497,13 @@ void TwitchChannel::claimAvailableBonusPoints(bool automatic)
 
                 channel->bonusClaimInFlight_ = false;
                 channel->channelPointsChanged.invoke();
+
+                watchheartbeat::appendWatchPointsLog(
+                    QStringLiteral("Points"),
+                    QStringLiteral("%1: Bonus claim failed (%2, %3)")
+                        .arg(channel->getName(), error,
+                             automatic ? QStringLiteral("auto")
+                                       : QStringLiteral("manual")));
 
                 qCWarning(chatterinoTwitch)
                     << "[Points] Failed to claim bonus chest" << claimId

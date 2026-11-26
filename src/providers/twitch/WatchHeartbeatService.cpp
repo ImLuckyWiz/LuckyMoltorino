@@ -11,16 +11,23 @@
 #include "providers/twitch/TwitchAccount.hpp"
 #include "providers/twitch/TwitchChannel.hpp"
 #include "providers/twitch/TwitchIrcServer.hpp"
+#include "singletons/Paths.hpp"
 #include "singletons/Settings.hpp"
 #include "util/PostToThread.hpp"
 #include "util/StreamLink.hpp"
 
 #include <boost/beast/zlib/deflate_stream.hpp>
 #include <boost/crc.hpp>
+#include <QDateTime>
+#include <QDir>
+#include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QMutex>
+#include <QMutexLocker>
 #include <QtEndian>
+#include <QTextStream>
 #include <QUrl>
 #include <QUrlQuery>
 
@@ -1010,15 +1017,26 @@ void WatchHeartbeatService::sendHeartbeatForTarget(
         .timeout(15000)
         .header("Content-Type", "application/x-www-form-urlencoded")
         .payload(legacyBody)
-        .onSuccess([login = target.login](const NetworkResult &) {
+        .onSuccess([login = target.login, sourceTag = target.sourceTag](
+                       const NetworkResult &) {
             qCDebug(chatterinoTwitch)
                 << "[WatchHeartbeat] Legacy spade minute-watched accepted for"
                 << login;
+            watchheartbeat::appendWatchPointsLog(
+                QStringLiteral("Watch"),
+                QStringLiteral("%1: Heartbeat accepted (%2)")
+                    .arg(login,
+                         sourceTag.isEmpty() ? QStringLiteral("auto")
+                                             : sourceTag));
         })
         .onError([login = target.login](const NetworkResult &res) {
             qCWarning(chatterinoTwitch)
                 << "[WatchHeartbeat] Legacy spade error for" << login << ":"
                 << res.formatError();
+            watchheartbeat::appendWatchPointsLog(
+                QStringLiteral("Watch"),
+                QStringLiteral("%1: Heartbeat error (%2)")
+                    .arg(login, res.formatError()));
         })
         .execute();
 
@@ -1066,5 +1084,44 @@ void WatchHeartbeatService::sendHeartbeatForTarget(
 
     this->heartbeatSent.invoke(target.login);
 }
+
+namespace watchheartbeat {
+
+QString watchPointsLogFilePath()
+{
+    auto *app = tryGetApp();
+    if (app == nullptr)
+    {
+        return {};
+    }
+
+    return QDir(app->getPaths().messageLogDirectory)
+        .filePath(QStringLiteral("watch-and-points.log"));
+}
+
+void appendWatchPointsLog(const QString &category, const QString &message)
+{
+    const QString path = watchPointsLogFilePath();
+    if (path.isEmpty())
+    {
+        return;
+    }
+
+    static QMutex logMutex;
+    QMutexLocker lock(&logMutex);
+
+    QDir().mkpath(QFileInfo(path).absolutePath());
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text))
+    {
+        return;
+    }
+
+    QTextStream out(&file);
+    out << QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"))
+        << " [" << category << "] " << message << '\n';
+}
+
+}  // namespace watchheartbeat
 
 }  // namespace chatterino

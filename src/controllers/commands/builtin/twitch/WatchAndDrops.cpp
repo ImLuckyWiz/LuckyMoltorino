@@ -11,6 +11,12 @@
 #include "widgets/splits/Split.hpp"
 #include "widgets/Window.hpp"
 
+#include <QDesktopServices>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QUrl>
+
 namespace chatterino::commands {
 
 namespace {
@@ -197,6 +203,34 @@ QString waitForStreamCommand(const CommandContext &ctx)
             QStringLiteral("Usage: /watchwait [idle|bg|off]"));
     }
 
+    return {};
+}
+
+QString openWatchPointsLogCommand(const CommandContext &ctx)
+{
+    if (!ctx.channel)
+    {
+        return {};
+    }
+
+    const QString path = watchheartbeat::watchPointsLogFilePath();
+    if (path.isEmpty())
+    {
+        ctx.channel->addSystemMessage(
+            QStringLiteral("Watch/Points log path is unavailable."));
+        return {};
+    }
+
+    QDir().mkpath(QFileInfo(path).absolutePath());
+    if (!QFileInfo::exists(path))
+    {
+        QFile file(path);
+        file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text);
+    }
+
+    ctx.channel->addSystemMessage(
+        QStringLiteral("Watch & Points log: %1").arg(QDir::toNativeSeparators(path)));
+    QDesktopServices::openUrl(QUrl::fromLocalFile(path));
     return {};
 }
 

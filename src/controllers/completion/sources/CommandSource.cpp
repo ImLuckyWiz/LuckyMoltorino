@@ -156,6 +156,7 @@ QString commandUsage(const QString &command)
         {"/warn", "<username> <reason>"},
         {"/watch", "[channel|off]"},
         {"/watchwait", "[idle|bg|off]"},
+        {"/watchlog", ""},
         {"/chatwarnings", ""},
         {".w", "<username> <message>"},
         {"/w", "<username> <message>"},
