@@ -1,7 +1,6 @@
 <img src="resources/icon.png" alt="Moltorino" width="128">
 
-Moltorino
-============
+# Moltorino
 
 Moltorino is a fork of [Chatterino7](https://github.com/SevenTV/chatterino7), which is based on [Chatterino 2](https://github.com/Chatterino/chatterino2). It supports Twitch, YouTube, Kick and TikTok chat.
 

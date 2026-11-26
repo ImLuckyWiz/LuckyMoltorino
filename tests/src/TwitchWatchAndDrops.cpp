@@ -373,18 +373,15 @@ TEST(StreamLink, BuildPlayerArgs)
     EXPECT_TRUE(buildStreamlinkPlayerArgs({}, false, mpv).isEmpty());
     EXPECT_TRUE(buildStreamlinkPlayerArgs({}, true, QString()).isEmpty());
     EXPECT_TRUE(
-        buildStreamlinkPlayerArgs({QStringLiteral("--player"),
-                                   QStringLiteral("vlc")},
-                                  true, mpv)
+        buildStreamlinkPlayerArgs(
+            {QStringLiteral("--player"), QStringLiteral("vlc")}, true, mpv)
             .isEmpty());
     EXPECT_TRUE(
         buildStreamlinkPlayerArgs({QStringLiteral("--player=vlc")}, true, mpv)
             .isEmpty());
-    EXPECT_TRUE(
-        buildStreamlinkPlayerArgs({QStringLiteral("-p"),
-                                   QStringLiteral("vlc")},
-                                  true, mpv)
-            .isEmpty());
+    EXPECT_TRUE(buildStreamlinkPlayerArgs(
+                    {QStringLiteral("-p"), QStringLiteral("vlc")}, true, mpv)
+                    .isEmpty());
 }
 
 TEST(WatchHeartbeat, AutoWatchPriority)

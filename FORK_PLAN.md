@@ -7,6 +7,7 @@ This plan outlines how to extend **Moltorino** (C++/Qt) with the watch-time, bon
 ## Current Baseline in Moltorino
 
 Moltorino already has most of the foundational plumbing needed:
+
 - **Twitch GQL & Auth:** `src/providers/twitch/api/TwitchGql.cpp` (including `TWITCH_GQL_BROWSER_CLIENT_ID` and `TWITCH_GQL_TV_CLIENT_ID` / `MoltorinoAuth`).
 - **PubSub:** `src/providers/twitch/PubSubClient.cpp` already subscribes to `community-points-user-v1.<userID>` and parses `claim-available` (`PubSubCommunityPointsUserV1Message::Type::ClaimAvailable`), forwarding it to `userPoints.updated`.
   - Currently, `TwitchChannel::handleUserPointsUpdate` (`src/providers/twitch/TwitchChannel.cpp`) returns early for anything other than `points-earned` and `points-spent`.

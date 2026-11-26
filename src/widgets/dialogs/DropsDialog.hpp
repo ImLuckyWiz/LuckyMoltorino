@@ -4,6 +4,7 @@
 #include "widgets/DraggablePopup.hpp"
 
 #include <pajlada/signals/signalholder.hpp>
+#include <QLabel>
 #include <QPointer>
 #include <QPushButton>
 #include <QScrollArea>
